@@ -13,7 +13,8 @@
 
 import fs from 'node:fs';
 import { readLiveSessions } from '../core/registry.js';
-import { writeSnapshot } from '../core/snapshot.js';
+import { writeSnapshot, readSnapshot } from '../core/snapshot.js';
+import { clearRestoreTasks } from '../restore/tasks.js';
 import { STATE_DIR, LOG_FILE } from '../core/paths.js';
 
 const POLL_INTERVAL_MS = 5000;
@@ -48,7 +49,37 @@ export function pollOnce() {
       lastSeen: Date.now(),
     }));
   writeSnapshot(sessions);
+  sweepFinishedRestores();
   return sessions;
+}
+
+/**
+ * Remove generated tasks once their restore has completed.
+ *
+ * The tasks are written to a project's .vscode/tasks.json and stay there, so
+ * simply opening that folder weeks later resurrects whatever was open at the
+ * time. Once a workspace has nothing left to restore, the tasks have done their
+ * job and are litter. Only labels we generated are touched.
+ */
+export function sweepFinishedRestores() {
+  const snapshot = readSnapshot();
+  if (!snapshot) return [];
+
+  const cleared = [];
+  for (const [root, entry] of Object.entries(snapshot.workspaces ?? {})) {
+    // Still waiting on chats to come back: the tasks may yet be needed.
+    if (entry.restorePoint?.sessions?.length) continue;
+    try {
+      const { removed } = clearRestoreTasks(root);
+      if (removed > 0) {
+        cleared.push({ root, removed });
+        log(`cleared ${removed} finished restore task(s) in ${root}`);
+      }
+    } catch {
+      // A folder that has moved or is unwritable is not worth failing a poll for.
+    }
+  }
+  return cleared;
 }
 
 export function run() {

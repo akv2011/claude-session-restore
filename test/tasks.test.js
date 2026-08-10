@@ -152,3 +152,35 @@ test('no dependsOn parent is emitted', () => {
   assert.equal(tasks.length, sessions.length, 'one task per chat, no orchestrator');
   assert.ok(tasks.every((t) => !t.dependsOn));
 });
+
+test('finished restore tasks are swept, so opening the folder later resurrects nothing', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-sweep-'));
+  process.env.HOME = home;
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-proj-'));
+
+  const snap = await import('../src/core/snapshot.js');
+  const { sweepFinishedRestores } = await import('../src/recorder/daemon.js');
+
+  const live = [{ sessionId: 'sw1', cwd, name: 'A' }];
+  snap.writeSnapshot(live);
+  fs.mkdirSync(path.join(cwd, '.vscode'), { recursive: true });
+  fs.writeFileSync(
+    path.join(cwd, '.vscode', 'tasks.json'),
+    JSON.stringify({ version: '2.0.0', tasks: [{ label: 'build' }, ...buildTasks(live)] }),
+  );
+
+  // Still running, nothing pending: the restore is finished, so sweep them.
+  sweepFinishedRestores();
+  const after = JSON.parse(fs.readFileSync(path.join(cwd, '.vscode', 'tasks.json'), 'utf8'));
+  assert.deepEqual(after.tasks.map((t) => t.label), ['build'], 'user task must survive the sweep');
+
+  // While a restore is still pending the tasks must stay put.
+  snap.writeSnapshot([]);                       // chats gone, restore point held
+  fs.writeFileSync(
+    path.join(cwd, '.vscode', 'tasks.json'),
+    JSON.stringify({ version: '2.0.0', tasks: buildTasks(live) }),
+  );
+  sweepFinishedRestores();
+  const pending = JSON.parse(fs.readFileSync(path.join(cwd, '.vscode', 'tasks.json'), 'utf8'));
+  assert.equal(pending.tasks.length, 1, 'tasks for a pending restore must not be swept');
+});
