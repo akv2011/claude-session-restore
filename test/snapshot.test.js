@@ -336,3 +336,12 @@ test('the process scan finds a resumed session id', async () => {
   const ids = readRunningSessionIds();
   assert.ok(ids instanceof Set, 'must always return a set, never throw');
 });
+
+test('a running chat missing from the registry still shows as live', async () => {
+  // The same registry gap that made restore offer a running chat also made the
+  // list show it as closed. Both read liveness, so both need the cross-check.
+  const src = fs.readFileSync(new URL('../src/core/sessions.js', import.meta.url), 'utf8');
+  assert.match(src, /readRunningSessionIds/, 'the scan must feed the session list');
+  assert.match(src, /live: Boolean\(liveEntry\) \|\| runningIds\.has\(sessionId\)/,
+    'liveness must consider the process scan, not only the registry');
+});

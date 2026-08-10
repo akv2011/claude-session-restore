@@ -16,7 +16,7 @@ import path from 'node:path';
 import { PROJECTS_DIR, isSessionId, encodeCwd, isInsidePath, canBeWorkspaceRoot } from './paths.js';
 import { readHead, parseLines } from './jsonl.js';
 import { resolveName } from './names.js';
-import { readLiveSessions } from './registry.js';
+import { readLiveSessions, readRunningSessionIds } from './registry.js';
 
 /** Authoritative working directory for a session, read from its transcript. */
 export function readCwd(file) {
@@ -59,6 +59,12 @@ export function scanSessions(options = {}) {
   const { resolveNames = true } = options;
   const live = readLiveSessions();
   const liveBySessionId = new Map(live.map((s) => [s.sessionId, s]));
+
+  // The registry is not always complete: a running session was found with no
+  // ~/.claude/sessions/<pid>.json, so it showed as closed here. A resumed
+  // session carries its id in argv, so ps is a second source of truth for
+  // liveness as well as for what may be restored.
+  const runningIds = readRunningSessionIds();
 
   let projectDirs;
   try {
@@ -118,7 +124,7 @@ export function scanSessions(options = {}) {
         bytes: stat.size,
         subagentBytes: subagents,
         modifiedAt: stat.mtimeMs,
-        live: Boolean(liveEntry),
+        live: Boolean(liveEntry) || runningIds.has(sessionId),
         pid: liveEntry?.pid ?? null,
         status: liveEntry?.status ?? null,
       });
