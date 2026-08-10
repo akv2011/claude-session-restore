@@ -1,14 +1,24 @@
 /**
- * Enabling VSCode's automatic tasks, in the only place VSCode reads it.
+ * Enabling VSCode's automatic tasks, in the only place VSCode actually reads it.
  *
- * VSCode's schema marks task.allowAutomaticTasks as scope 1 (APPLICATION), the
- * same scope as update.mode, and application-scoped settings are read from USER
- * settings only. A copy in a project's .vscode/settings.json is ignored
- * silently, so tasks get written and then never run.
+ * This module exists because of a bug: restore used to write
+ * `"task.allowAutomaticTasks": "on"` into the project's .vscode/settings.json,
+ * which does nothing whatsoever. VSCode's own bundled schema says:
  *
- * User settings.json is JSONC and hand-maintained, so it is patched textually
- * rather than parsed and rewritten. Losing someone's comments to flip a setting
- * would be a poor trade.
+ *   "task.allowAutomaticTasks": { enum:["on","off"], default:"off",
+ *                                 scope:1, restricted:true }
+ *
+ * scope 1 is APPLICATION, the same scope as update.mode and window.titleBarStyle,
+ * and application-scoped settings are read from USER settings only. Workspace
+ * settings for them are ignored silently. So the tasks were written correctly
+ * and then never ran, and restore reported success anyway.
+ *
+ * `restricted: true` matters too: the folder must be trusted, or VSCode's
+ * RunAutomaticTasks bails before it looks at the setting at all.
+ *
+ * User settings.json is JSONC (comments, trailing commas) and is hand-edited, so
+ * it is patched textually rather than parsed and rewritten. Losing somebody's
+ * comments to enable a checkbox would be a poor trade.
  */
 
 import fs from 'node:fs';

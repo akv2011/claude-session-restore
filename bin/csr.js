@@ -11,7 +11,7 @@ import {
   getOverview, getLive, previewDelete, performDelete,
   restoreProject, clearProject, recorder,
 } from '../src/core/api.js';
-import { restorableSessions, readSnapshot } from '../src/core/snapshot.js';
+import { restorableSessions, readSnapshot, groupByWorkspace } from '../src/core/snapshot.js';
 import { readAutoTaskSetting, enableAutoTasks } from '../src/core/api.js';
 import { setTerminalLocation, readTerminalLocation } from '../src/restore/vscode-settings.js';
 import { pollOnce } from '../src/recorder/daemon.js';
@@ -104,11 +104,9 @@ async function cmdRestore(args) {
     return;
   }
 
-  const byCwd = new Map();
-  for (const session of sessions) {
-    if (!byCwd.has(session.cwd)) byCwd.set(session.cwd, []);
-    byCwd.get(session.cwd).push(session);
-  }
+  // Grouped by the folder you would open, not by exact cwd, so chats in
+  // subfolders land in one window instead of one window each.
+  const byCwd = new Map(groupByWorkspace(sessions).map((g) => [g.root, g.sessions]));
 
   console.log(`\n${BOLD}${sessions.length} chat(s) open at ${ago(capturedAt)}${RESET} ${DIM}(${source})${RESET}`);
   for (const [cwd, group] of byCwd) {

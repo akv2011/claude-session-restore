@@ -35,7 +35,7 @@ test('an AI title is used when there is no custom one', () => {
 });
 
 test('the LAST title wins, because names are mutable mid-session', () => {
-  // Names can change mid-session, so the last write must win.
+  // Observed live: pid 12309 changed from Refactor_auth to Api_client.
   const file = writeTranscript([
     { type: 'custom-title', customTitle: 'Refactor_auth' },
     userLine('carry on'),

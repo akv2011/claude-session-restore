@@ -7,16 +7,20 @@
  * spawns the terminals and resumes every chat. No extension, no AppleScript, no
  * driving the UI from outside.
  *
- * Two gates decide whether those tasks ever run, and both fail silently:
+ * Two gates decide whether those tasks ever run, and both fail silently. This
+ * was verified by experiment, not assumption: a probe task in an untrusted
+ * folder never fired, the same probe in a trusted folder fired in 4 seconds.
  *
- *   1. "task.allowAutomaticTasks" must be "on" in USER settings. VSCode marks it
- *      scope 1 (APPLICATION), like update.mode, so a workspace copy is read by
- *      nobody. See restore/vscode-settings.js.
- *   2. The folder must be trusted. RunAutomaticTasks returns before it inspects
- *      the setting when isWorkspaceTrusted() is false.
+ *   1. "task.allowAutomaticTasks" must be "on" in USER settings. VSCode's own
+ *      schema marks it scope 1 (APPLICATION), like update.mode, so a workspace
+ *      .vscode/settings.json copy is read by nobody. This module used to write
+ *      exactly that and report success. See restore/vscode-settings.js.
+ *   2. The folder must be trusted. VSCode's RunAutomaticTasks returns before it
+ *      even inspects the setting when isWorkspaceTrusted() is false, so a fresh
+ *      folder does nothing at all until you answer the trust prompt.
  *
- * Starts are staggered with a leading sleep so a dozen terminals do not launch
- * in the same instant.
+ * A third, milder one: nine terminals launching in the same instant thrashes
+ * the machine, so starts are staggered with a leading sleep.
  */
 
 import fs from 'node:fs';
@@ -38,14 +42,19 @@ export function shellQuote(value) {
 export function buildTasks(sessions, options = {}) {
   const stagger = options.staggerSeconds ?? DEFAULT_STAGGER_SECONDS;
   const claude = options.claudePath ?? 'claude';
+  const root = options.workspaceRoot ?? null;
 
   return sessions.map((session, index) => {
     const delay = index * stagger;
     const resume = `${claude} --resume ${shellQuote(session.sessionId)}`;
+    // A chat started in a subfolder of the workspace keeps its own cwd, so one
+    // window can host every chat under it instead of spawning a window each.
+    const needsCwd = session.cwd && root && session.cwd !== root;
     return {
       label: `${TASK_PREFIX}${session.name ?? session.sessionId.slice(0, 8)}`,
       type: 'shell',
       command: delay > 0 ? `sleep ${delay}; ${resume}` : resume,
+      ...(needsCwd ? { options: { cwd: session.cwd } } : {}),
       runOptions: { runOn: 'folderOpen' },
       presentation: {
         panel: 'dedicated',
@@ -99,7 +108,10 @@ export function writeRestoreTasks(cwd, sessions, options = {}) {
   fs.mkdirSync(vscodeDir, { recursive: true });
 
   const tasksFile = path.join(vscodeDir, 'tasks.json');
-  const merged = mergeTasks(readJsonIfPresent(tasksFile), buildTasks(sessions, options));
+  const merged = mergeTasks(
+    readJsonIfPresent(tasksFile),
+    buildTasks(sessions, { ...options, workspaceRoot: cwd }),
+  );
   fs.writeFileSync(tasksFile, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
 
   // Deliberately does NOT write task.allowAutomaticTasks here. That setting is

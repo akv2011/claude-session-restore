@@ -1,11 +1,15 @@
 /**
- * Filesystem locations, and one asymmetry worth knowing.
+ * Every filesystem location this tool touches.
  *
- * Encoding a cwd into a project directory name is easy; decoding it back is
- * impossible. Claude Code replaces both "/" and "_" with "-", so
- * /Users/you/Code/my_project and a path that really contained those dashes
- * produce the same directory name. Read the authoritative `cwd` out of the
- * transcript instead (see sessions.js readCwd).
+ * One important asymmetry lives here: encoding a cwd into a project directory
+ * name is easy, but decoding it back is impossible. Claude Code replaces "/"
+ * with "-", and it also replaces "_" with "-", so
+ *
+ *   /Users/you/Code/my_project  ->  -Users-you-Code-my-project
+ *
+ * is indistinguishable from a path that really did contain those dashes. Never
+ * try to reverse it. Read the authoritative `cwd` out of the transcript instead
+ * (see sessions.js readCwd).
  */
 
 import os from 'node:os';

@@ -1,11 +1,16 @@
 /*
-  Dark instrument panel: amber for anything live, mono for data, hairline rules
-  and tabular figures. Light mode is a tuned counterpart, not an inversion.
+  Every foreground token below was solved against its own background until it
+  cleared WCAG AA, not picked by eye. The previous palette failed exactly where
+  the app was hardest to read: --ink-faint carried the timestamps, sizes, table
+  headers and project sub-lines at 2.97:1 in dark and 2.71:1 in light, and light
+  mode's amber sat at 3.93:1. Measured ratios are noted per token.
 
-  Every foreground token was solved against its own background until it cleared
-  WCAG AA rather than picked by eye; the resulting ratios are noted per token.
-  Type resolves entirely from fonts already on macOS, so there is no network
-  fetch and no FOIT.
+  Type is a mono/sans pair, all resolved from fonts already on macOS so there is
+  no network fetch and no FOIT:
+    data    SF Mono   aligns columns, tabular by design
+    UI      SF Pro    the system UI face, optically sized for small labels
+    display Avenir Next  a little character where there is room for it
+  Avenir Next *Condensed* is gone. Condensed faces are the wrong tool at 10px.
 */
 
 :root {
@@ -19,7 +24,7 @@
 
   --ink: #e6eaf1;        /* 14.9:1 */
   --ink-dim: #9ca3b1;    /*  7.1:1 */
-  --ink-faint: #788294;  /* 4.6:1 */
+  --ink-faint: #788294;  /*  4.6:1, was 2.97:1 */
 
   --phosphor: #f0a33c;   /*  8.6:1 */
   --phosphor-soft: rgba(240, 163, 60, 0.15);
@@ -48,9 +53,9 @@
 
     --ink: #1d2027;        /* 15.6:1 */
     --ink-dim: #5f6672;    /*  5.6:1 */
-    --ink-faint: #6b727f;  /* 4.6:1 */
+    --ink-faint: #6b727f;  /*  4.6:1, was 2.71:1 */
 
-    --phosphor: #a0650f;   /* 4.6:1 */
+    --phosphor: #a0650f;   /*  4.6:1, was 3.93:1 */
     --phosphor-soft: rgba(160, 101, 15, 0.13);
     --teal: #2f7d76;       /*  4.7:1 */
     --danger: #b83f2f;     /*  5.3:1 */

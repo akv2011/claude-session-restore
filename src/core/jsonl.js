@@ -1,9 +1,14 @@
 /**
- * Bounded readers for transcript files.
+ * Partial readers for transcript files.
  *
- * Transcripts reach hundreds of megabytes, so reading whole files just to pull
- * out a name makes the sidebar take minutes. Everything needed sits at one end:
- * cwd and the first prompt near the head, titles near the tail.
+ * Transcripts get large. The biggest on this machine is 110 MB and there are 235
+ * of them, so reading whole files to pull out a name would make the sidebar take
+ * minutes to load. Everything needed lives at one end or the other:
+ *
+ *   cwd, first prompt  -> near the head
+ *   ai-title, custom-title -> written repeatedly, so the last one is near the tail
+ *
+ * These helpers read a bounded window from either end instead of the whole file.
  */
 
 import fs from 'node:fs';

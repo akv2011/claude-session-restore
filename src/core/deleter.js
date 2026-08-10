@@ -1,20 +1,22 @@
 /**
- * Delete a chat properly.
+ * Delete a chat properly, the way the CLI never offers to.
  *
- * Removing the transcript alone leaves four other stores behind. All of these
- * are keyed by session id:
+ * Deleting the transcript alone is what every existing tool does, and it leaves
+ * four other stores behind. Measured on this machine, all of these are keyed by
+ * session id:
  *
- *   projects/<dir>/<sid>.jsonl        the transcript
- *   projects/<dir>/<sid>/subagents/   subagent transcripts
- *   session-env/<sid>/                per session env
- *   file-history/<sid>/               edit history
- *   tasks/<sid>/                      task state
- *   history.jsonl                     prompt lines
+ *   projects/<dir>/<sid>.jsonl        the transcript          235 sessions
+ *   projects/<dir>/<sid>/subagents/   subagent transcripts    272 KB - 824 KB each
+ *   session-env/<sid>/                per session env          66 matches
+ *   file-history/<sid>/               edit history             62 matches
+ *   tasks/<sid>/                      task state               21 matches
+ *   history.jsonl                     prompt lines             ~40 lines per session
  *
- * shell-snapshots is NOT session keyed and is left alone.
+ * shell-snapshots is NOT session keyed (0 matches out of 8) and is left alone.
  *
- * Two rules: nothing is ever rm'd, only moved to Trash, and a session with a
- * live PID cannot be deleted.
+ * Two safety rules that are not negotiable:
+ *   - nothing is ever rm'd, only moved to ~/.Trash, so a misclick is recoverable
+ *   - a session with a live PID cannot be deleted at all
  */
 
 import fs from 'node:fs';

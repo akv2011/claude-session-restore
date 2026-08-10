@@ -1,10 +1,14 @@
 /**
  * The recorder.
  *
- * Exists because ~/.claude/sessions/<pid>.json is wiped when a session ends, so
- * the only way to restore anything is to have been watching while the work
- * happened. Deliberately dull: poll, verify, write, repeat. Failures are logged
- * and swallowed, because a recorder that crashes stops protecting you.
+ * This exists because ~/.claude/sessions/<pid>.json is wiped when a session
+ * ends. After a shutdown there is nothing left on the machine describing what
+ * had been open, so the only way to restore anything is to have been watching
+ * while the work was happening.
+ *
+ * It is deliberately dull: poll, verify, write, repeat. Any failure is logged
+ * and swallowed, because a recorder that crashes is a recorder that silently
+ * stops protecting you.
  */
 
 import fs from 'node:fs';

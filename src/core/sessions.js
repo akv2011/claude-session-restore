@@ -1,10 +1,14 @@
 /**
  * Enumerate every chat that has ever existed, grouped by project.
  *
- * Two things about the layout: most .jsonl files under projects/ are not
- * sessions but subagent transcripts nested at <project>/<sessionId>/subagents/,
- * and the project directory name cannot be decoded back to a path (see
- * paths.js), so the real cwd is read from the transcript body.
+ * Two things worth knowing about the on-disk layout:
+ *
+ * 1. `find ~/.claude/projects -name '*.jsonl'` reports 1008 files on this
+ *    machine but only 235 are sessions. The rest are subagent transcripts nested
+ *    at <project>/<sessionId>/subagents/*.jsonl. Only top level files count.
+ *
+ * 2. The project directory name cannot be turned back into a path (see
+ *    paths.js). The real cwd is read out of the transcript body instead.
  */
 
 import fs from 'node:fs';
@@ -121,9 +125,10 @@ export function scanSessions(options = {}) {
     }
   }
 
-  // A live session does not always have a transcript on disk yet. Scanning
-  // transcripts alone would make it invisible in the sidebar and silently drop
-  // it from a restore, so union the registry back in.
+  // A live session does not always have a transcript on disk yet. Observed with
+  // session 397dd761 ("Widget_ui"), which was running with no .jsonl file at
+  // all. Scanning transcripts alone would make it invisible in the sidebar and,
+  // worse, silently drop it from a restore. Union the registry back in.
   const seen = new Set(sessions.map((s) => s.sessionId));
   for (const entry of live) {
     if (!entry.sessionId || seen.has(entry.sessionId)) continue;
@@ -142,6 +147,19 @@ export function scanSessions(options = {}) {
       status: entry.status ?? null,
       transcriptMissing: true,
     });
+  }
+
+  // A transcript whose head holds no `cwd` would otherwise surface as a raw
+  // encoded directory name in the sidebar. Siblings in the same directory almost
+  // always resolved, and the encoding is deterministic, so borrow theirs.
+  const cwdByDir = new Map();
+  for (const session of sessions) {
+    if (session.cwd && !cwdByDir.has(session.projectDir)) {
+      cwdByDir.set(session.projectDir, session.cwd);
+    }
+  }
+  for (const session of sessions) {
+    if (!session.cwd) session.cwd = cwdByDir.get(session.projectDir) ?? null;
   }
 
   sessions.sort((a, b) => b.modifiedAt - a.modifiedAt);

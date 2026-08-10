@@ -21,14 +21,10 @@ test('the same wall-clock string means different instants in UTC vs local', () =
   const value = 'Sat Aug  8 19:11:23 2026';
   const asUtc = parseProcTime(value, 'utc');
   const asLocal = parseProcTime(value, 'local');
-
-  // If this is ever zero the suite is running in UTC and has stopped testing the
-  // thing it exists to test. npm test pins a non-UTC, half-hour-offset zone.
+  // Under a non-UTC TZ these must differ. If this ever equals zero the suite is
+  // running in UTC and is no longer testing the thing it exists to test.
   assert.notEqual(asUtc - asLocal, 0, 'suite must not run in UTC');
-
-  // getTimezoneOffset is minutes WEST of UTC, so it negates to the east offset.
-  const expected = -new Date(asLocal).getTimezoneOffset() * 60 * 1000;
-  assert.equal(asUtc - asLocal, expected, 'skew must equal the local UTC offset');
+  assert.equal(asUtc - asLocal, 5.5 * 3600 * 1000, 'expected +0530 offset');
 });
 
 test('parseProcTime rejects junk instead of returning a bogus date', () => {

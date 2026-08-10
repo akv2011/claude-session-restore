@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { scanSessions } from './sessions.js';
 import { readLiveSessions } from './registry.js';
 import { planDelete, deleteSession } from './deleter.js';
-import { readSnapshot, restorableSessions, groupByCwd } from './snapshot.js';
+import { readSnapshot, restorableSessions, groupByWorkspace } from './snapshot.js';
 import { writeRestoreTasks, clearRestoreTasks } from '../restore/tasks.js';
 import { readAutoTaskSetting, enableAutoTasks } from '../restore/vscode-settings.js';
 import * as launchd from '../recorder/launchd.js';
@@ -42,7 +42,7 @@ export function getOverview() {
     restore: {
       source: restorable.source,
       capturedAt: restorable.capturedAt,
-      groups: groupByCwd(restorable.sessions),
+      groups: groupByWorkspace(restorable.sessions),
       count: restorable.sessions.length,
     },
     recorder: launchd.status(),

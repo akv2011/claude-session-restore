@@ -92,3 +92,39 @@ test('sessions group by cwd, which is the unit a window restores', () => {
   assert.equal(groups.length, 2);
   assert.equal(groups.find((g) => g.cwd === '/one').sessions.length, 2);
 });
+
+test('nested folders restore into one window, not one window each', async () => {
+  const { groupByWorkspace } = await import('../src/core/snapshot.js');
+  const mixed = [
+    { sessionId: 'a', cwd: '/Users/you/Projects', name: 'A' },
+    { sessionId: 'b', cwd: '/Users/you/Projects/reader', name: 'B' },
+    { sessionId: 'c', cwd: '/Users/you/Projects/reader/deep', name: 'C' },
+    { sessionId: 'd', cwd: '/Users/you/Other', name: 'D' },
+  ];
+  const groups = groupByWorkspace(mixed);
+  assert.equal(groups.length, 2, 'subfolders must fold into their parent');
+
+  const projects = groups.find((g) => g.root === '/Users/you/Projects');
+  assert.equal(projects.sessions.length, 3);
+  assert.ok(groups.some((g) => g.root === '/Users/you/Other'));
+});
+
+test('a sibling folder with a shared prefix is not swallowed', async () => {
+  const { groupByWorkspace } = await import('../src/core/snapshot.js');
+  // "/a/project" must not capture "/a/project-two": containment is on a boundary.
+  const groups = await groupByWorkspace([
+    { sessionId: 'a', cwd: '/a/project', name: 'A' },
+    { sessionId: 'b', cwd: '/a/project-two', name: 'B' },
+  ]);
+  assert.equal(groups.length, 2, 'prefix match must respect path boundaries');
+});
+
+test('sessions without a cwd are dropped rather than grouped under undefined', async () => {
+  const { groupByWorkspace } = await import('../src/core/snapshot.js');
+  const groups = groupByWorkspace([
+    { sessionId: 'a', cwd: '/a', name: 'A' },
+    { sessionId: 'b', cwd: null, name: 'B' },
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].sessions.length, 1);
+});

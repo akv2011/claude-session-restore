@@ -1,12 +1,14 @@
 /**
- * Read the live session registry Claude Code maintains.
+ * Read the live session registry that Claude Code maintains.
  *
- * Every running `claude` process writes ~/.claude/sessions/<pid>.json, keyed by
- * PID. Claude removes these on exit, so this is a snapshot of NOW and nothing
- * else. That is why the recorder exists.
+ * Every running `claude` process writes ~/.claude/sessions/<pid>.json. The
+ * filename is the PID. Contents look like:
  *
- * Not every entry is a chat: the daemon pre-warms background workers that
- * register themselves too. Only kind "interactive" is a terminal a human used.
+ *   { pid, sessionId, cwd, name, status, procStart, version, kind, entrypoint }
+ *
+ * Claude removes these files on exit, so this is a snapshot of NOW and nothing
+ * else. That is precisely why the recorder exists: after a shutdown there is no
+ * trace here of what had been open.
  */
 
 import fs from 'node:fs';
@@ -50,9 +52,10 @@ export function readRegistry() {
  *   { "kind": "bg", "jobId": "397dd761", "name": "Widget_ui", "status": "idle" }
  *   -> claude bg-spare --bg-spare /tmp/cc-daemon-501/.../93d2b0d1.claim.sock
  *
- * Such a worker has no transcript because it never held a conversation, and
- * `claude --resume` on it is meaningless, so counting it as a chat inflates the
- * running count and would poison a restore.
+ * One had been idle for 36 hours here. It has no transcript because it never
+ * held a conversation, and `claude --resume` on it is meaningless, so counting
+ * it as a chat both inflates the running count and would poison a restore.
+ * Only `kind: "interactive"` is a terminal session a human was using.
  *
  * @param {{interactiveOnly?:boolean}} [options] pass false when you need every
  *   live session regardless of kind, e.g. to protect one from deletion.

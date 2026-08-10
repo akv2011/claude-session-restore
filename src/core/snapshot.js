@@ -2,9 +2,12 @@
  * The durable record of what was open.
  *
  * Claude Code deletes ~/.claude/sessions/<pid>.json when a session ends, so
- * after a shutdown nothing on the machine remembers what had been running.
- * Writes are atomic because the failure being defended against is the machine
- * losing power mid-write.
+ * after a shutdown nothing on the machine remembers what had been running. This
+ * store is the answer: the recorder keeps rewriting it while work happens, and
+ * it is the only thing left to read at boot.
+ *
+ * Writes are atomic (temp file plus rename) because the failure mode being
+ * defended against is literally the machine losing power mid write.
  */
 
 import fs from 'node:fs';
@@ -95,4 +98,40 @@ export function groupByCwd(sessions) {
     byCwd.get(session.cwd).push(session);
   }
   return [...byCwd.entries()].map(([cwd, group]) => ({ cwd, sessions: group }));
+}
+
+/** True when `child` is `parent` or sits inside it, on a path boundary. */
+function isInside(child, parent) {
+  return child === parent || child.startsWith(`${parent}/`);
+}
+
+/**
+ * Group sessions by the folder you would actually open in VSCode.
+ *
+ * Grouping by exact cwd looks right in a list but restores badly: a chat started
+ * in Projects/reader would open its own VSCode window, separate from the
+ * Projects window you work in. Nested cwds are therefore folded into the
+ * shallowest cwd that also has sessions, and each task carries its own cwd so
+ * the terminals still start in the right subfolder.
+ *
+ * @returns {Array<{root:string, sessions:Array<object>}>}
+ */
+export function groupByWorkspace(sessions) {
+  const roots = [...new Set(sessions.map((s) => s.cwd).filter(Boolean))]
+    .sort((a, b) => a.length - b.length);
+
+  const rootFor = new Map();
+  for (const cwd of roots) {
+    rootFor.set(cwd, roots.find((candidate) => isInside(cwd, candidate)) ?? cwd);
+  }
+
+  const grouped = new Map();
+  for (const session of sessions) {
+    if (!session.cwd) continue;
+    const root = rootFor.get(session.cwd) ?? session.cwd;
+    if (!grouped.has(root)) grouped.set(root, []);
+    grouped.get(root).push(session);
+  }
+  // `cwd` is kept as an alias so callers that group by folder need no change.
+  return [...grouped.entries()].map(([root, group]) => ({ root, cwd: root, sessions: group }));
 }

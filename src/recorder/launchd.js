@@ -1,9 +1,9 @@
 /**
- * Keep the recorder running across logins, via launchd.
+ * Keep the recorder running across logins, using launchd.
  *
- * Two modes: `interval` hands the timer to launchd and runs a one-shot tick, so
- * nothing stays resident; `resident` keeps a process alive polling itself,
- * which costs roughly the Node runtime's memory floor for no extra benefit.
+ * KeepAlive restarts it if it ever dies, RunAtLoad starts it at login. Without
+ * this the recorder is only running when you remember to start it, and the one
+ * time you forget is the time the laptop dies.
  */
 
 import fs from 'node:fs';
@@ -23,11 +23,14 @@ function daemonEntry() {
 }
 
 /**
- *   resident  KeepAlive process polling itself. Roughly 40 MB RSS, 0.0% CPU.
- *             Snapshot never more than 5s stale.
- *   interval  launchd owns the timer and runs a one-shot tick. Nothing stays
- *             resident between ticks. Snapshot can be up to intervalSeconds
- *             stale, which is harmless because sessions live for hours.
+ * Two ways to run the recorder, measured on this machine:
+ *
+ *   resident  KeepAlive process polling itself. ~40 MB RSS under node, ~29 MB
+ *             under bun, 0.0% CPU. Snapshot is never more than 5s stale.
+ *   interval  launchd owns the timer and runs a one-shot tick. NOTHING stays
+ *             resident: 0 MB between ticks, ~90 ms of work per tick. Snapshot
+ *             can be up to `intervalSeconds` stale, which is harmless because
+ *             sessions live for hours.
  *
  * @param {{mode?:'resident'|'interval', intervalSeconds?:number,
  *          nodePath?:string, entry?:string}} [options]

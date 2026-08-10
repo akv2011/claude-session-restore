@@ -1,14 +1,22 @@
 /**
- * Is a recorded session still running?
+ * Is a recorded Claude session still actually running?
  *
- * Two checks, both required: does the PID exist, and is it the same process?
- * macOS recycles PIDs, so a stale registry file can point at an unrelated one.
+ * Two checks, both required:
  *
- * The trap: the registry writes `procStart` in UTC while `ps lstart` prints
- * local time. Compared naively on a non-UTC machine every live session shows a
- * whole-hours skew and reads as dead, so restore silently brings nothing back.
- * Both sides are normalised to epoch here, and the tests run under a non-UTC TZ
- * so this cannot regress unnoticed.
+ *   1. Does the PID exist at all?
+ *   2. Is it the SAME process? macOS recycles PIDs, so a registry file left
+ *      behind by a dead session can point at an unrelated new process.
+ *
+ * Check 2 compares the registry's `procStart` against the process's real start
+ * time, and there is a trap in doing so:
+ *
+ *   registry procStart : "Sat Aug  8 19:11:23 2026"   <- UTC
+ *   ps lstart          : "Sat Aug  8 23:45:18 2026"   <- LOCAL time
+ *
+ * On a +0530 machine every live session shows a 5.5 hour delta, so a naive
+ * string or Date comparison marks all of them dead and the restorer silently
+ * brings nothing back. Both sides are normalised to epoch milliseconds here,
+ * and the tests run under TZ=Asia/Kolkata so a regression cannot pass in UTC.
  */
 
 import { execFileSync } from 'node:child_process';
