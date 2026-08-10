@@ -1,10 +1,10 @@
 /**
  * The timezone landmine, pinned down.
  *
- * These run under TZ=Asia/Kolkata (see package.json) precisely because the bug
- * being guarded against is invisible in UTC: registry procStart is UTC while
- * ps lstart is local, so a naive comparison shows a 5.5 hour skew and marks
- * every live session dead.
+ * `npm test` pins a non-UTC zone with a half-hour offset, because the bug being
+ * guarded against is invisible in UTC: registry procStart is UTC while ps lstart
+ * is local, so a naive comparison shows a whole-hours skew and marks every live
+ * session dead. The offset is derived at runtime, so any non-UTC zone works.
  */
 
 import test from 'node:test';
@@ -21,10 +21,13 @@ test('the same wall-clock string means different instants in UTC vs local', () =
   const value = 'Sat Aug  8 19:11:23 2026';
   const asUtc = parseProcTime(value, 'utc');
   const asLocal = parseProcTime(value, 'local');
-  // Under a non-UTC TZ these must differ. If this ever equals zero the suite is
-  // running in UTC and is no longer testing the thing it exists to test.
+  // If this is ever zero the suite is running in UTC and has stopped testing the
+  // thing it exists to test. npm test pins a non-UTC, half-hour-offset zone.
   assert.notEqual(asUtc - asLocal, 0, 'suite must not run in UTC');
-  assert.equal(asUtc - asLocal, 5.5 * 3600 * 1000, 'expected +0530 offset');
+
+  // getTimezoneOffset is minutes WEST of UTC, so it negates to the east offset.
+  const expected = -new Date(asLocal).getTimezoneOffset() * 60 * 1000;
+  assert.equal(asUtc - asLocal, expected, 'skew must equal the local UTC offset');
 });
 
 test('parseProcTime rejects junk instead of returning a bogus date', () => {
