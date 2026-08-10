@@ -19,8 +19,24 @@
  *      even inspects the setting when isWorkspaceTrusted() is false, so a fresh
  *      folder does nothing at all until you answer the trust prompt.
  *
- * A third, milder one: nine terminals launching in the same instant thrashes
- * the machine, so starts are staggered with a leading sleep.
+ * A third, and the awkward one: VSCode does not reliably run several tasks that
+ * start together. Since 1.70 multiple runOn folderOpen tasks do not all fire
+ * (microsoft/vscode#160013), and a dependsOn parent did not help either.
+ * Measured on four tasks, only presentation.group ran all of them:
+ *
+ *   shared group                4 of 4
+ *   no group, dedicated panel   1 of 4
+ *   dependsOn + dedicated       1 of 4
+ *   dependsOn + panel "new"     0 of 4
+ *
+ * So tasks share a group. VSCode presents grouped tasks as split panes rather
+ * than tabs, which is a real cost, but silently restoring one chat out of four
+ * is a worse one. The panes can be rearranged by hand afterwards.
+ *
+ * dependsOn is not used: combined with grouping it measured 0 of 4.
+ *
+ * Starts are staggered with a leading sleep so a dozen terminals do not launch
+ * in the same instant.
  */
 
 import fs from 'node:fs';
@@ -44,17 +60,17 @@ export function buildTasks(sessions, options = {}) {
   const stagger = options.staggerSeconds ?? DEFAULT_STAGGER_SECONDS;
   const claude = options.claudePath ?? 'claude';
   const root = options.workspaceRoot ?? null;
-  // presentation.group is documented as "executed in a specific terminal group
-  // using split panes... will use split terminals instead of a new terminal
-  // panel". Setting it squeezed every restored chat into a narrow split. Each
-  // chat wants a terminal of its own, which is a tab in the editor area.
-  const split = options.splitTerminals === true;
+  // presentation.group is documented as "use split terminals", and it is the
+  // only configuration in which VSCode actually runs every task. Measured on
+  // four tasks: with a shared group 4 of 4 ran; without it 1 of 4; via
+  // dependsOn with a dedicated panel 1 of 4; with panel "new" 0 of 4.
+  // Losing chats is worse than the layout, so grouping is the default. Opting
+  // out gives tabs but only the last chat comes back.
+  const split = options.separateTabs !== true;
 
-  return sessions.map((session, index) => {
+  const children = sessions.map((session, index) => {
     const delay = index * stagger;
     const resume = `${claude} --resume ${shellQuote(session.sessionId)}`;
-    // A chat started in a subfolder of the workspace keeps its own cwd, so one
-    // window can host every chat under it instead of spawning a window each.
     const needsCwd = session.cwd && root && session.cwd !== root;
     return {
       label: `${TASK_PREFIX}${session.name ?? session.sessionId.slice(0, 8)}`,
@@ -72,6 +88,8 @@ export function buildTasks(sessions, options = {}) {
       problemMatcher: [],
     };
   });
+
+  return children;
 }
 
 /**

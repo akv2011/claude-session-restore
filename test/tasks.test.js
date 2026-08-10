@@ -130,15 +130,25 @@ test('clearing removes only generated tasks', () => {
   assert.deepEqual(written.tasks.map((t) => t.label), ['build']);
 });
 
-test('chats get their own terminal, not a split pane', () => {
-  // presentation.group means "use split terminals". Setting it crammed every
-  // restored chat into a narrow pane instead of giving each one a tab.
-  const [task] = buildTasks(sessions);
-  assert.equal(task.presentation.group, undefined, 'group must not be set by default');
-  assert.equal(task.presentation.panel, 'dedicated');
+test('tasks share a group, because that is the only way they all run', () => {
+  // Measured with four tasks in fresh folders: a shared group ran 4 of 4, no
+  // group ran 2 of 4. VSCode shows grouped tasks as split panes, which is a
+  // real cost, but restoring two chats out of four is a worse one.
+  for (const task of buildTasks(sessions)) {
+    assert.equal(task.presentation.group, 'claude');
+    assert.equal(task.runOptions.runOn, 'folderOpen', 'each task opens on its own');
+  }
 });
 
-test('splitting is still available for anyone who wants it', () => {
-  const [task] = buildTasks(sessions, { splitTerminals: true });
-  assert.equal(task.presentation.group, 'claude');
+test('separate tabs can be opted into, at the cost of chats not restoring', () => {
+  for (const task of buildTasks(sessions, { separateTabs: true })) {
+    assert.equal(task.presentation.group, undefined);
+  }
+});
+
+test('no dependsOn parent is emitted', () => {
+  // A dependsOn parent combined with grouping measured 0 of 4.
+  const tasks = buildTasks(sessions);
+  assert.equal(tasks.length, sessions.length, 'one task per chat, no orchestrator');
+  assert.ok(tasks.every((t) => !t.dependsOn));
 });
