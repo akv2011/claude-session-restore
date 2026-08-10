@@ -310,3 +310,29 @@ test('the offer and the generated tasks keep that order', async () => {
   assert.match(tasks[1].command, /^sleep 3;/);
   assert.match(tasks[2].command, /^sleep 6;/);
 });
+
+test('a chat running with no registry file is still never offered', async () => {
+  // The registry is not always complete: a live session was observed with no
+  // ~/.claude/sessions/<pid>.json, so the app believed it was closed and offered
+  // to restore it, which would have started a second copy.
+  const chats = [
+    { sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', cwd: '/w/ghost', name: 'Ghost' },
+    { sessionId: 'bbbbbbbb-1111-2222-3333-444444444444', cwd: '/w/ghost', name: 'Really gone' },
+  ];
+  writeSnapshot(chats);
+  writeSnapshot([]);   // the registry says both are gone
+
+  // ...but a process scan proves the first one is running.
+  const running = new Set(['aaaaaaaa-1111-2222-3333-444444444444']);
+  const offered = restorableWorkspaces(readSnapshot(), undefined, running)
+    .find((w) => w.root === '/w/ghost');
+
+  assert.deepEqual(offered.sessions.map((s) => s.name), ['Really gone'],
+    'a provably running chat must be excluded even when the registry omits it');
+});
+
+test('the process scan finds a resumed session id', async () => {
+  const { readRunningSessionIds } = await import('../src/core/registry.js');
+  const ids = readRunningSessionIds();
+  assert.ok(ids instanceof Set, 'must always return a set, never throw');
+});

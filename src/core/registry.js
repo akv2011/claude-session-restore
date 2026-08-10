@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { SESSIONS_DIR } from './paths.js';
+import { execFileSync } from 'node:child_process';
 import { verifyLiveness } from './liveness.js';
 
 /**
@@ -101,4 +102,36 @@ export function liveSessionIds() {
   return new Set(
     readLiveSessions({ interactiveOnly: false }).map((s) => s.sessionId).filter(Boolean),
   );
+}
+
+/**
+ * Session ids that are provably running, read from process arguments.
+ *
+ * The registry is not always complete. A session was observed running with no
+ * ~/.claude/sessions/<pid>.json at all, which made it invisible here and, worse,
+ * made restore offer a chat that was already open. A resumed session carries its
+ * id in argv, so this is a second, independent source of truth.
+ *
+ * It only sees sessions started with an explicit id: a bare `claude` or a
+ * `--resume` with no argument cannot be attributed, so this supplements the
+ * registry rather than replacing it.
+ */
+export function readRunningSessionIds() {
+  let stdout = '';
+  try {
+    stdout = execFileSync('ps', ['-eo', 'command='], {
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return new Set();
+  }
+
+  const ids = new Set();
+  const pattern = /claude\b[^\n]*?--resume[= ]+'?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'?/gi;
+  for (const line of stdout.split('\n')) {
+    for (const match of line.matchAll(pattern)) ids.add(match[1].toLowerCase());
+  }
+  return ids;
 }

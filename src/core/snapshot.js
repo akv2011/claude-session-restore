@@ -22,6 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { STATE_DIR, STATE_FILE, isInsidePath, canBeWorkspaceRoot } from './paths.js';
+import { readRunningSessionIds } from './registry.js';
 
 const SCHEMA_VERSION = 3;
 
@@ -124,7 +125,8 @@ const RETAIN_MS = 48 * 60 * 60 * 1000;
  *                  lastSeen:number|null, source:'closed'}>} only workspaces with
  *   something to bring back are returned.
  */
-export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAIN_MS) {
+export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAIN_MS,
+  runningIds = readRunningSessionIds()) {
   if (!snapshot) return [];
   const now = snapshot.capturedAt ?? Date.now();
 
@@ -134,7 +136,10 @@ export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAI
     .map(([root, entry]) => ({
       root,
       cwd: root,
-      sessions: entry.lastLiveSet ?? [],
+      // Never offer a chat that is provably running. The registry sometimes
+      // lacks a file for a live session, and without this cross-check restore
+      // offered it and would have started a second copy.
+      sessions: (entry.lastLiveSet ?? []).filter((x) => !runningIds.has(x.sessionId)),
       lastSeen: entry.darkSince ?? entry.lastSeen ?? null,
       source: 'closed',
     }))
