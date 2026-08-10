@@ -21,7 +21,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { STATE_DIR, STATE_FILE, isInsidePath, canBeWorkspaceRoot } from './paths.js';
+import {
+  STATE_DIR, STATE_FILE, PROJECTS_DIR, isInsidePath, canBeWorkspaceRoot,
+} from './paths.js';
 import { readRunningSessionIds } from './registry.js';
 
 const SCHEMA_VERSION = 3;
@@ -136,10 +138,13 @@ export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAI
     .map(([root, entry]) => ({
       root,
       cwd: root,
-      // Never offer a chat that is provably running. The registry sometimes
-      // lacks a file for a live session, and without this cross-check restore
-      // offered it and would have started a second copy.
-      sessions: (entry.lastLiveSet ?? []).filter((x) => !runningIds.has(x.sessionId)),
+      // Never offer a chat that is provably running, nor one whose transcript
+      // is being written right now. The registry sometimes lacks a file for a
+      // live session and a picker-started session carries no id in argv, so
+      // neither signal alone is enough. Suppressing is the safe direction: a
+      // missed offer is an inconvenience, a wrong one starts a second copy.
+      sessions: (entry.lastLiveSet ?? [])
+        .filter((x) => !runningIds.has(x.sessionId) && !isBeingWritten(x.sessionId)),
       lastSeen: entry.darkSince ?? entry.lastSeen ?? null,
       source: 'closed',
     }))
@@ -208,4 +213,31 @@ export function groupByWorkspace(sessions) {
   }
   // `cwd` is kept as an alias so callers that group by folder need no change.
   return [...grouped.entries()].map(([root, group]) => ({ root, cwd: root, sessions: group }));
+}
+
+/** How recently a transcript must have changed to count as an active chat. */
+const ACTIVE_WRITE_MS = 90 * 1000;
+
+/**
+ * Is this session's transcript being written right now?
+ *
+ * A chat started from the resume picker carries no id in its arguments and is
+ * sometimes missing from the registry, leaving nothing to identify it by. It is
+ * still writing to its transcript, which is enough to know not to offer it.
+ */
+function isBeingWritten(sessionId, now = Date.now()) {
+  if (!sessionId) return false;
+  let dirs;
+  try {
+    dirs = fs.readdirSync(PROJECTS_DIR);
+  } catch {
+    return false;
+  }
+  for (const dir of dirs) {
+    try {
+      const stat = fs.statSync(path.join(PROJECTS_DIR, dir, `${sessionId}.jsonl`));
+      return now - stat.mtimeMs < ACTIVE_WRITE_MS;
+    } catch { /* not in this project directory */ }
+  }
+  return false;
 }

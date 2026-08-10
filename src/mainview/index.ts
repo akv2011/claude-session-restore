@@ -76,8 +76,11 @@ function projectLabel(fullPath: string) {
     : escapeHtml(base);
 }
 
+// Where the NAME came from. This is not liveness: labelling the registry case
+// "live" meant a running chat whose name came from its transcript displayed
+// "YOURS" while its dot said otherwise.
 const SOURCE_LABEL: Record<string, string> = {
-  registry: 'live', custom: 'yours', ai: 'auto', prompt: 'prompt', id: 'none',
+  registry: 'yours', custom: 'yours', ai: 'auto', prompt: 'prompt', id: 'none',
 };
 
 /* ---------- toast ---------- */
@@ -303,7 +306,9 @@ function renderPanel() {
         <span class="status-dot"></span>
         <span class="row-label" title="${escapeHtml(session.name)}">${escapeHtml(session.name)}</span>
       </span>
-      <span class="tag" data-src="${session.nameSource}">${SOURCE_LABEL[session.nameSource] ?? session.nameSource}</span>
+      <span class="tag" data-src="${session.live ? 'live' : session.nameSource}">${
+        session.live ? 'live' : (SOURCE_LABEL[session.nameSource] ?? session.nameSource)
+      }</span>
       ${size}
       <span class="num faint">${ago(session.modifiedAt)}</span>
       <button class="row-del" aria-label="Delete ${escapeHtml(session.name)}" title="${session.live ? 'running: close it first' : 'delete'}" ${session.live ? 'disabled' : ''}>&#x2715;</button>`;

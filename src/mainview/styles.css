@@ -451,7 +451,7 @@ body {
   justify-self: start;
 }
 .tag[data-src="custom"] { color: var(--teal); border-color: currentColor; }
-.tag[data-src="registry"] { color: var(--phosphor); border-color: currentColor; }
+.tag[data-src="live"] { color: var(--phosphor); border-color: currentColor; }
 
 .num { font-variant-numeric: tabular-nums; text-align: right; color: var(--ink-dim); font-size: 13px; }
 .num.faint { color: var(--ink-faint); }
