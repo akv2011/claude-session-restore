@@ -270,3 +270,43 @@ test('a folder dark for longer than the retention window is dropped', () => {
   snap.capturedAt = snap.workspaces['/w/ancient'].darkSince + 72 * 60 * 60 * 1000;
   assert.equal(restorableWorkspaces(snap).find((w) => w.root === '/w/ancient'), undefined);
 });
+
+test('chats are ordered oldest first, so they come back as you opened them', async () => {
+  const { sortByOpenOrder } = await import('../src/recorder/daemon.js');
+  // Deliberately jumbled, the way readdir returns registry files.
+  const jumbled = [
+    { sessionId: 'c', name: 'Third', startedAt: 3000 },
+    { sessionId: 'a', name: 'First', startedAt: 1000 },
+    { sessionId: 'b', name: 'Second', startedAt: 2000 },
+  ];
+  assert.deepEqual(sortByOpenOrder(jumbled).map((s) => s.name), ['First', 'Second', 'Third']);
+  assert.deepEqual(jumbled.map((s) => s.name), ['Third', 'First', 'Second'], 'must not mutate');
+});
+
+test('sessions with no timestamp fall back to name rather than arbitrary order', async () => {
+  const { sortByOpenOrder } = await import('../src/recorder/daemon.js');
+  assert.deepEqual(
+    sortByOpenOrder([{ name: 'Zeta' }, { name: 'Alpha' }]).map((s) => s.name),
+    ['Alpha', 'Zeta'],
+  );
+});
+
+test('the offer and the generated tasks keep that order', async () => {
+  const { buildTasks } = await import('../src/restore/tasks.js');
+  const ordered = ['First', 'Second', 'Third'].map((name, i) => ({
+    sessionId: `ord${i}`, cwd: '/w/ordered', name, startedAt: (i + 1) * 1000,
+  }));
+  writeSnapshot(ordered);
+  writeSnapshot([]);
+
+  const offered = restorableWorkspaces().find((w) => w.root === '/w/ordered');
+  assert.deepEqual(offered.sessions.map((s) => s.name), ['First', 'Second', 'Third']);
+
+  const tasks = buildTasks(offered.sessions, { workspaceRoot: '/w/ordered' });
+  assert.deepEqual(tasks.map((t) => t.label),
+    ['claude: First', 'claude: Second', 'claude: Third']);
+  // The stagger must follow the same order, so they appear in sequence.
+  assert.ok(!tasks[0].command.startsWith('sleep'));
+  assert.match(tasks[1].command, /^sleep 3;/);
+  assert.match(tasks[2].command, /^sleep 6;/);
+});

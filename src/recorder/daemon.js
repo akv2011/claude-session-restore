@@ -46,11 +46,24 @@ export function pollOnce() {
       status: session.status,
       version: session.version,
       pid: session.pid,
+      startedAt: session.startedAt ?? null,
       lastSeen: Date.now(),
     }));
-  writeSnapshot(sessions);
+  const ordered = sortByOpenOrder(sessions);
+  writeSnapshot(ordered);
   sweepFinishedRestores();
-  return sessions;
+  return ordered;
+}
+
+/**
+ * Oldest first, so chats come back in the order you opened them rather than in
+ * whatever order readdir happened to return the registry files. VSCode does not
+ * expose tab order, and opening order is the closest honest proxy for it. Ties
+ * and missing timestamps fall back to the name so the result is never arbitrary.
+ */
+export function sortByOpenOrder(sessions) {
+  return [...sessions].sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0)
+    || String(a.name ?? '').localeCompare(String(b.name ?? '')));
 }
 
 /**
