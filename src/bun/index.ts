@@ -10,7 +10,7 @@
 import { BrowserWindow, BrowserView } from 'electrobun/bun';
 import {
   getOverview, previewDelete, performDelete, restoreProject, clearProject,
-  openInVscode, recorder, enableAutoTasks,
+  openInVscode, recorder, enableAutoTasks, setPersistentSessions,
 } from '../core/api.js';
 
 const rpc = BrowserView.defineRPC({
@@ -45,6 +45,14 @@ const rpc = BrowserView.defineRPC({
       enableAutoTasks: () => {
         try {
           return { ok: true, result: enableAutoTasks() };
+        } catch (err) {
+          return { ok: false, error: (err as Error).message };
+        }
+      },
+
+      disablePersistence: () => {
+        try {
+          return { ok: true, result: setPersistentSessions(false) };
         } catch (err) {
           return { ok: false, error: (err as Error).message };
         }

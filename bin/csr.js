@@ -13,7 +13,10 @@ import {
 } from '../src/core/api.js';
 import { restorableSessions, readSnapshot, groupByWorkspace } from '../src/core/snapshot.js';
 import { readAutoTaskSetting, enableAutoTasks } from '../src/core/api.js';
-import { setTerminalLocation, readTerminalLocation } from '../src/restore/vscode-settings.js';
+import {
+  setTerminalLocation, readTerminalLocation,
+  readPersistentSessions, setPersistentSessions,
+} from '../src/restore/vscode-settings.js';
 import { pollOnce } from '../src/recorder/daemon.js';
 
 const BOLD = '\x1b[1m'; const DIM = '\x1b[2m'; const RESET = '\x1b[0m';
@@ -137,6 +140,9 @@ async function cmdRestore(args) {
     console.log(`${DIM}task.allowAutomaticTasks is application-scoped, so it only counts in user settings. run: csr autotasks${RESET}`);
   }
   console.log(`${DIM}the folder must also be trusted, or VSCode blocks automatic tasks silently.${RESET}`);
+  if (readPersistentSessions().effective) {
+    console.log(`${YELLOW}heads up: VSCode terminal revival is on, so you will also get empty shells beside these. run: csr persistence off${RESET}`);
+  }
 }
 
 function cmdDaemon(args) {
@@ -199,6 +205,26 @@ function cmdLayout(args) {
   console.log(`${DIM}applies to terminals opened from now on${RESET}`);
 }
 
+function cmdPersistence(args) {
+  const wanted = args.find((a) => !a.startsWith('-'));
+  const current = readPersistentSessions();
+  if (!wanted) {
+    console.log(`VSCode terminal revival: ${BOLD}${current.effective ? 'on' : 'off'}${RESET}${current.present ? '' : `${DIM} (unset, VSCode defaults to on)${RESET}`}`);
+    if (current.effective) {
+      console.log(`${YELLOW}while this is on you get duplicates after a restore.${RESET}`);
+      console.log(`${DIM}VSCode revives your old terminals as empty shells (the chat that was running in them is gone) and restore spawns fresh ones alongside.${RESET}`);
+      console.log(`${DIM}csr persistence off   leave restore as the only thing reopening terminals${RESET}`);
+    }
+    return;
+  }
+  const enabled = wanted === 'on';
+  if (!['on', 'off'].includes(wanted)) throw new Error('usage: csr persistence <on|off>');
+  const result = setPersistentSessions(enabled);
+  if (!result.changed) return console.log(`${YELLOW}no change: ${result.reason}${RESET}`);
+  console.log(`${GREEN}VSCode terminal revival ${enabled ? 'on' : 'off'} (${result.reason})${RESET}`);
+  console.log(`${DIM}${enabled ? 'VSCode will reopen its own terminals again.' : 'restore is now the only thing that reopens terminals.'}${RESET}`);
+}
+
 function cmdClear(args) {
   const cwd = args.find((a) => !a.startsWith('-')) ?? process.cwd();
   const { removed, tasksFile } = clearProject(cwd);
@@ -215,6 +241,7 @@ ${BOLD}csr${RESET} - claude session restore
   ${BOLD}csr clear${RESET} [folder]       remove generated tasks from a folder
   ${BOLD}csr autotasks${RESET}            let VSCode auto-run restored terminals
   ${BOLD}csr layout${RESET} [view|editor]  where restored terminals open
+  ${BOLD}csr persistence${RESET} [on|off]  VSCode's own terminal revival (off avoids duplicates)
   ${BOLD}csr daemon${RESET} <install|uninstall|status|poll>
 
 ${DIM}delete and restore are dry runs until you pass --yes.${RESET}
@@ -230,6 +257,7 @@ try {
     case 'clear': cmdClear(args); break;
     case 'autotasks': cmdAutotasks(args); break;
     case 'layout': cmdLayout(args); break;
+    case 'persistence': cmdPersistence(args); break;
     case 'daemon': cmdDaemon(args); break;
     default: console.log(HELP);
   }

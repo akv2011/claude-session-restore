@@ -13,7 +13,10 @@ import { readLiveSessions } from './registry.js';
 import { planDelete, deleteSession } from './deleter.js';
 import { readSnapshot, restorableSessions, groupByWorkspace } from './snapshot.js';
 import { writeRestoreTasks, clearRestoreTasks } from '../restore/tasks.js';
-import { readAutoTaskSetting, enableAutoTasks } from '../restore/vscode-settings.js';
+import {
+  readAutoTaskSetting, enableAutoTasks,
+  readPersistentSessions, setPersistentSessions,
+} from '../restore/vscode-settings.js';
 import * as launchd from '../recorder/launchd.js';
 
 /** Everything the sidebar needs, in one call. */
@@ -53,6 +56,7 @@ export function getOverview() {
     },
     recorder: launchd.status(),
     autoTasks: readAutoTaskSetting(),
+    persistence: readPersistentSessions(),
   };
 }
 
@@ -99,4 +103,4 @@ export function openInVscode(cwd) {
 export const recorder = launchd;
 
 /** VSCode will not auto-run restored terminals unless this is on. */
-export { readAutoTaskSetting, enableAutoTasks };
+export { readAutoTaskSetting, enableAutoTasks, readPersistentSessions, setPersistentSessions };

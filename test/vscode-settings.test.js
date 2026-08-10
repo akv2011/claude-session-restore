@@ -16,8 +16,10 @@ import path from 'node:path';
 const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-vs-'));
 process.env.HOME = fakeHome;
 
-const { readAutoTaskSetting, enableAutoTasks, userSettingsPath } =
-  await import('../src/restore/vscode-settings.js');
+const {
+  readAutoTaskSetting, enableAutoTasks, userSettingsPath,
+  readPersistentSessions, setPersistentSessions,
+} = await import('../src/restore/vscode-settings.js');
 
 function writeSettings(content) {
   const file = userSettingsPath();
@@ -108,4 +110,32 @@ test('a missing settings.json is created rather than erroring', () => {
   const result = enableAutoTasks();
   assert.equal(result.changed, true);
   assert.equal(readAutoTaskSetting().enabled, true);
+});
+
+test('an unset persistence flag reads as on, because VSCode defaults to on', () => {
+  writeSettings('{ "editor.fontSize": 13 }');
+  const p = readPersistentSessions();
+  assert.equal(p.present, false);
+  assert.equal(p.value, null);
+  assert.equal(p.effective, true, 'absent must not be mistaken for off');
+});
+
+test('turning persistence off writes a real boolean, not a string', () => {
+  writeSettings('{\n  // keep me\n  "editor.fontSize": 13\n}');
+  const result = setPersistentSessions(false);
+  assert.equal(result.changed, true);
+
+  const raw = fs.readFileSync(userSettingsPath(), 'utf8');
+  assert.match(raw, /"terminal\.integrated\.enablePersistentSessions":\s*false/);
+  assert.ok(!/enablePersistentSessions":\s*"false"/.test(raw), 'must not be quoted');
+  assert.match(raw, /\/\/ keep me/, 'comments must survive');
+  assert.equal(readPersistentSessions().effective, false);
+});
+
+test('flipping persistence back on replaces rather than duplicates the key', () => {
+  writeSettings('{\n  "terminal.integrated.enablePersistentSessions": false\n}');
+  setPersistentSessions(true);
+  const raw = fs.readFileSync(userSettingsPath(), 'utf8');
+  assert.equal((raw.match(/enablePersistentSessions/g) ?? []).length, 1, 'key duplicated');
+  assert.equal(readPersistentSessions().value, true);
 });

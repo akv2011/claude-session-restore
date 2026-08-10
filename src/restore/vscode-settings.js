@@ -146,6 +146,14 @@ export function enableAutoTasks() {
   return { changed: true, reason: current.present ? 'flipped off to on' : 'inserted', file, backup };
 }
 
+/**
+ * VSCode revives terminals itself across restarts. The revived shell relaunches
+ * empty, because the process that was running in it (claude) is gone. With
+ * restore also spawning terminals, you get both: two empty shells beside two
+ * resumed chats. Turning this off leaves restore as the single owner.
+ */
+export const PERSISTENCE_KEY = 'terminal.integrated.enablePersistentSessions';
+
 /** Read any string setting out of user settings.json. */
 export function readUserSetting(key) {
   const file = userSettingsPath();
@@ -197,6 +205,69 @@ export function setUserSetting(key, value) {
 
   fs.writeFileSync(file, next, 'utf8');
   return { changed: true, reason: current.present ? 'replaced' : 'inserted', file, backup };
+}
+
+/** Read a boolean setting; null when absent. */
+export function readBooleanSetting(key) {
+  const file = userSettingsPath();
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    return { value: null, present: false, file, readable: false };
+  }
+  const match = stripComments(raw).match(
+    new RegExp(`"${key.replace(/\./g, '\\.')}"\\s*:\\s*(true|false)`),
+  );
+  return { value: match ? match[1] === 'true' : null, present: Boolean(match), file, readable: true };
+}
+
+/** Set a boolean setting, preserving comments and formatting. */
+export function setBooleanSetting(key, value) {
+  const file = userSettingsPath();
+  const current = readBooleanSetting(key);
+  if (current.value === value) return { changed: false, reason: 'already set', file };
+
+  let raw;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `{\n  "${key}": ${value}\n}\n`, 'utf8');
+    return { changed: true, reason: 'created settings.json', file, backup: null };
+  }
+
+  const backup = `${file}.csr-backup`;
+  fs.writeFileSync(backup, raw, 'utf8');
+
+  let next;
+  if (current.present) {
+    next = raw.replace(
+      new RegExp(`("${key.replace(/\./g, '\\.')}"\\s*:\\s*)(true|false)`),
+      `$1${value}`,
+    );
+    if (next === raw) return { changed: false, reason: 'could not patch value', file, backup };
+  } else {
+    const brace = raw.indexOf('{');
+    if (brace < 0) return { changed: false, reason: 'settings.json has no object', file, backup };
+    next = `${raw.slice(0, brace + 1)}\n  "${key}": ${value},${raw.slice(brace + 1)}`;
+  }
+
+  fs.writeFileSync(file, next, 'utf8');
+  return { changed: true, reason: current.present ? 'replaced' : 'inserted', file, backup };
+}
+
+/**
+ * VSCode's own terminal revival, which duplicates what restore does.
+ * Unset means on: VSCode enables persistent sessions by default.
+ */
+export function readPersistentSessions() {
+  const s = readBooleanSetting(PERSISTENCE_KEY);
+  return { ...s, effective: s.value === null ? true : s.value };
+}
+
+export function setPersistentSessions(enabled) {
+  return setBooleanSetting(PERSISTENCE_KEY, enabled);
 }
 
 /** @param {'view'|'editor'} location */

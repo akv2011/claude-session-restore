@@ -200,6 +200,25 @@ function renderRestoreBanner() {
     };
   }
 
+  // VSCode revives its own terminals too, so a restore lands beside a set of
+  // empty shells whose chats have exited. Say so before the click.
+  if (state!.persistence?.effective) {
+    const dupe = document.createElement('div');
+    dupe.className = 'warn';
+    dupe.innerHTML = `<span class="warn-body"><strong>You will also get empty terminals.</strong>
+      VSCode reopens its own terminals on restart, and the chats that were running in them have exited,
+      so they come back as bare shells beside the restored ones.</span>
+      <button class="btn" id="fix-persistence">Let restore own it</button>`;
+    host.appendChild(dupe);
+    $('fix-persistence').onclick = async () => {
+      const response = await call('disablePersistence');
+      toast(response.ok
+        ? 'VSCode will stop reopening its own terminals. Restore now owns it.'
+        : response.error, response.ok ? 'ok' : 'error');
+      await refresh();
+    };
+  }
+
   $('do-restore').onclick = async () => {
     const button = $('do-restore') as HTMLButtonElement;
     button.disabled = true;
