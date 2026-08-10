@@ -77,34 +77,37 @@ export function writeSnapshot(sessions) {
   for (const root of roots) {
     const prior = workspaces[root];
     const live = liveByRoot.get(root) ?? [];
-    const held = prior?.restorePoint ?? null;
+    const liveIds = new Set(live.map((session) => session.sessionId));
 
-    if (live.length === 0) {
-      // Alive to empty: this is the moment worth remembering. Capture it once,
-      // and do not touch it again while the workspace stays empty.
-      if (prior && !held && prior.sessions?.length) {
-        // sessions must be emptied here too. Leaving the old list behind made
-        // every held chat look like it was already running, so a freshly closed
-        // window offered nothing at all.
-        workspaces[root] = {
-          ...prior,
-          sessions: [],
-          restorePoint: { sessions: prior.sessions, closedAt: now },
-        };
-      }
-      continue;
+    // Any chat that was running last poll and is not now has gone, and going is
+    // what makes it restorable. Capturing only when the whole workspace emptied
+    // was wrong twice over: closing some chats while one stayed open captured
+    // nothing, and once a restore point existed the capture was skipped
+    // entirely, so a later shutdown left stale chats on offer and lost the real
+    // ones.
+    const vanished = (prior?.sessions ?? []).filter((s) => !liveIds.has(s.sessionId));
+
+    // Whatever is already held stays held until it is running again.
+    const stillMissing = (prior?.restorePoint?.sessions ?? [])
+      .filter((s) => !liveIds.has(s.sessionId));
+
+    const held = [];
+    const seen = new Set();
+    for (const session of [...vanished, ...stillMissing]) {
+      if (seen.has(session.sessionId)) continue;
+      seen.add(session.sessionId);
+      held.push(session);
     }
 
-    // A held restore point is released only once every chat in it is running
-    // again. Without this the live set overwrites it, so opening one chat by
-    // hand after closing a window silently discards the rest.
-    const liveIds = new Set(live.map((session) => session.sessionId));
-    const satisfied = !held || held.sessions.every((session) => liveIds.has(session.sessionId));
-
     workspaces[root] = {
-      lastSeen: now,
+      lastSeen: live.length ? now : (prior?.lastSeen ?? now),
       sessions: live,
-      ...(satisfied ? {} : { restorePoint: held }),
+      ...(held.length ? {
+        restorePoint: {
+          sessions: held,
+          closedAt: vanished.length ? now : (prior?.restorePoint?.closedAt ?? now),
+        },
+      } : {}),
     };
   }
 
@@ -132,7 +135,8 @@ const RETAIN_MS = 48 * 60 * 60 * 1000;
  * which is what lets you reopen a project you shut a couple of hours ago.
  *
  * @returns {Array<{root:string, cwd:string, sessions:Array<object>,
- *                  lastSeen:number|null, source:'current'|'closed'}>}
+ *                  lastSeen:number|null, source:'closed'}>} only workspaces with
+ *   something to bring back are returned.
  */
 export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAIN_MS) {
   if (!snapshot) return [];
@@ -146,13 +150,15 @@ export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAI
       if (held) {
         // Offer only what is not already back, so restoring twice cannot
         // duplicate a chat that is already running.
+        // There is no "partial" state to report: a chat that comes back is
+        // pruned from the hold as it returns, so what remains is simply gone.
         const missing = held.sessions.filter((s) => !liveIds.has(s.sessionId));
         return {
           root,
           cwd: root,
           sessions: missing,
           lastSeen: held.closedAt ?? entry.lastSeen ?? null,
-          source: missing.length === held.sessions.length ? 'closed' : 'partial',
+          source: 'closed',
         };
       }
       // Nothing to restore in a workspace whose chats are already running.

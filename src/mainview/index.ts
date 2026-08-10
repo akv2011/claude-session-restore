@@ -153,7 +153,7 @@ function renderRestoreBanner() {
   // reads as a bug even though it would have done the right thing.
   const allGroups = restore.groups as Array<{
     cwd: string; root: string; sessions: Session[];
-    lastSeen: number | null; source: 'current' | 'closed';
+    lastSeen: number | null; source: 'closed';
   }>;
   const groups = selected === null
     ? allGroups
@@ -171,9 +171,9 @@ function renderRestoreBanner() {
       weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
     })
     : 'unknown time';
-  const state1 = closed.length === groups.length
-    ? `closed ${ago(lastSeen)} ago`
-    : (closed.length ? `${closed.length} closed, rest running` : 'currently running');
+  // Only workspaces with something to bring back are returned now, so every
+  // group here is a set of chats that have gone.
+  const state1 = `closed ${ago(lastSeen)} ago`;
 
   const names = groups.flatMap((g) => g.sessions.map((s) => s.name));
   const where = scoped
@@ -184,7 +184,7 @@ function renderRestoreBanner() {
   banner.className = 'restore';
   banner.innerHTML = `
     <div class="restore-body">
-      <div class="restore-title">${count} chat${count === 1 ? '' : 's'} ${closed.length === groups.length ? 'from a closed window' : 'open now'} · ${where}</div>
+      <div class="restore-title">${count} chat${count === 1 ? '' : 's'} to bring back · ${where}</div>
       <div class="restore-sub">${when} · ${state1}</div>
       <div class="restore-list">${escapeHtml(names.slice(0, 6).join(' · '))}${names.length > 6 ? ` · +${names.length - 6} more` : ''}</div>
     </div>

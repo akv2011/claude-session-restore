@@ -96,9 +96,11 @@ test('a different chat does not count as restoring the one you closed', () => {
   assert.equal(held.source, 'closed');
   assert.deepEqual(held.sessions.map((s) => s.name), ['Old']);
 
-  // Bringing the real one back releases the hold, so nothing remains on offer.
+  // Bringing Old back releases it from the hold. New has now gone, so it takes
+  // its place: anything that disappears is restorable.
   writeSnapshot([{ sessionId: 'x', cwd: '/w/p', name: 'Old' }]);
-  assert.equal(restorableWorkspaces().find((w) => w.root === '/w/p'), undefined);
+  const after = restorableWorkspaces().find((w) => w.root === '/w/p');
+  assert.deepEqual(after.sessions.map((s) => s.name), ['New']);
 });
 
 test('a v1 snapshot is migrated rather than discarded', () => {
@@ -218,7 +220,6 @@ test('the restore point survives opening chats by hand', () => {
 
   writeSnapshot([eight[0]]);
   assert.equal(offers().sessions.length, 7, 'opening one by hand must not discard the other seven');
-  assert.equal(offers().source, 'partial');
 
   writeSnapshot(eight.slice(0, 5));
   assert.equal(offers().sessions.length, 3, 'only what is still missing is offered');
@@ -237,7 +238,10 @@ test('after the hold is released, normal tracking resumes', () => {
   writeSnapshot([]);
   writeSnapshot(three);                 // fully restored, hold released
   writeSnapshot(three.slice(0, 2));     // you close one deliberately
-  assert.equal(offers(), undefined, 'a deliberately closed chat must not be re-offered');
+  // Restore cannot tell "finished with it" from "lost it", and being unable to
+  // bring a chat back is the worse failure, so a closed chat is offered. The
+  // banner is dismissible, and the offer expires after RETAIN_MS.
+  assert.deepEqual(offers().sessions.map((s) => s.name), ['C2']);
 });
 
 test('a restored chat is never offered twice', () => {
@@ -288,4 +292,51 @@ test('only the chats that are gone are offered after a partial restore', () => {
   writeSnapshot([two[0]]);      // A is back, B is not
   const offered = restorableWorkspaces().find((w) => w.root === '/w/part');
   assert.deepEqual(offered.sessions.map((s) => s.sessionId), ['p2']);
+});
+
+test('closing some chats is remembered even while others keep running', () => {
+  // The workspace never empties here, so waiting for emptiness captured nothing.
+  const four = Array.from({ length: 4 }, (_, i) => ({
+    sessionId: `v${i}`, cwd: '/w/vanish', name: `C${i}`,
+  }));
+  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/vanish');
+
+  writeSnapshot(four);
+  assert.equal(offers(), undefined, 'nothing gone yet');
+
+  writeSnapshot([four[0]]);           // you close three, one stays open
+  assert.deepEqual(offers().sessions.map((s) => s.name).sort(), ['C1', 'C2', 'C3']);
+});
+
+test('a later close is captured even when a restore point already exists', () => {
+  // This lost real chats: with a hold in place the capture was skipped, so a
+  // shutdown left the stale hold on offer and dropped what was actually open.
+  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/later');
+  const a = { sessionId: 'l1', cwd: '/w/later', name: 'Old' };
+  const b = { sessionId: 'l2', cwd: '/w/later', name: 'New' };
+
+  writeSnapshot([a]);
+  writeSnapshot([]);                  // Old closes, hold = [Old]
+  assert.deepEqual(offers().sessions.map((s) => s.name), ['Old']);
+
+  writeSnapshot([b]);                 // you work on something else
+  writeSnapshot([]);                  // and close that too
+  assert.deepEqual(offers().sessions.map((s) => s.name).sort(), ['New', 'Old'],
+    'the newly closed chat must join the hold, not be dropped');
+});
+
+test('a chat that comes back leaves the hold', () => {
+  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/back');
+  const one = { sessionId: 'b1', cwd: '/w/back', name: 'A' };
+  const two = { sessionId: 'b2', cwd: '/w/back', name: 'B' };
+
+  writeSnapshot([one, two]);
+  writeSnapshot([]);
+  assert.equal(offers().sessions.length, 2);
+
+  writeSnapshot([one]);
+  assert.deepEqual(offers().sessions.map((s) => s.name), ['B']);
+
+  writeSnapshot([one, two]);
+  assert.equal(offers(), undefined, 'everything back means nothing to restore');
 });
