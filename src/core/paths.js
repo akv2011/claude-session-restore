@@ -84,3 +84,33 @@ export function canBeWorkspaceRoot(cwd) {
   const normalised = cwd.replace(/\/+$/, '');
   return normalised !== '' && normalised !== HOME && normalised !== '/';
 }
+
+/**
+ * Environment variables that mark a process as living inside a Claude session.
+ *
+ * Anything launched from within a session inherits these, and a `claude` started
+ * with them present believes it is a child session: it turns transcript saving
+ * OFF, does not register in ~/.claude/sessions, and reports the parent's id.
+ * Such a chat is invisible even to `claude agents --json`, and its conversation
+ * is never written to disk.
+ *
+ * Restore launches VSCode, and every terminal in that window inherits whatever
+ * VSCode was launched with, so these must be stripped at both points.
+ */
+export const INHERITED_CLAUDE_VARS = [
+  'CLAUDECODE',
+  'CLAUDE_PID',
+  'CLAUDE_CODE_SSE_PORT',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_EFFORT',
+  'CLAUDE_CODE_EXECPATH',
+];
+
+/** A copy of `env` with the session markers removed. */
+export function withoutClaudeMarkers(env = process.env) {
+  const clean = { ...env };
+  for (const key of INHERITED_CLAUDE_VARS) delete clean[key];
+  return clean;
+}

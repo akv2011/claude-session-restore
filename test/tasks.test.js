@@ -31,7 +31,19 @@ test('each session becomes a folderOpen task with its own terminal', () => {
 test('starts are staggered so nine terminals do not launch at once', () => {
   const tasks = buildTasks(sessions, { staggerSeconds: 3 });
   assert.ok(!tasks[0].command.startsWith('sleep'), 'first should start immediately');
-  assert.match(tasks[1].command, /^sleep 3; claude --resume/);
+  assert.match(tasks[1].command, /^sleep 3; env /);
+  assert.match(tasks[1].command, /claude --resume/);
+});
+
+test('the restored chat does not inherit the parent session markers', () => {
+  // Inheriting CLAUDE_CODE_CHILD_SESSION makes claude treat the chat as a child
+  // session: transcript saving off, no registry entry, invisible to the app and
+  // to `claude agents`. The conversation is then never written to disk at all.
+  const [task] = buildTasks(sessions);
+  assert.match(task.command, /^env (-u \S+ )+claude --resume/);
+  for (const marker of ['CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ID', 'CLAUDECODE']) {
+    assert.match(task.command, new RegExp(`-u ${marker}\\b`), `${marker} must be stripped`);
+  }
 });
 
 test('quoting survives a real shell, so a hostile id cannot inject a command', () => {

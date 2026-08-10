@@ -41,6 +41,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { INHERITED_CLAUDE_VARS } from '../core/paths.js';
 import { readAutoTaskSetting } from './vscode-settings.js';
 
 const TASK_PREFIX = 'claude: ';
@@ -70,7 +71,12 @@ export function buildTasks(sessions, options = {}) {
 
   const children = sessions.map((session, index) => {
     const delay = index * stagger;
-    const resume = `${claude} --resume ${shellQuote(session.sessionId)}`;
+    // Strip the inherited session markers. Without this the restored chat is a
+    // child session: no transcript, no registry entry, invisible to the app and
+    // to `claude agents`. Belt and braces with the clean launch env, since the
+    // folder may be opened by hand rather than by restore.
+    const unset = INHERITED_CLAUDE_VARS.map((v) => `-u ${v}`).join(' ');
+    const resume = `env ${unset} ${claude} --resume ${shellQuote(session.sessionId)}`;
     const needsCwd = session.cwd && root && session.cwd !== root;
     return {
       label: `${TASK_PREFIX}${session.name ?? session.sessionId.slice(0, 8)}`,

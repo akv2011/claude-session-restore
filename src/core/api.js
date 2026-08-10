@@ -8,6 +8,7 @@
 
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import { withoutClaudeMarkers } from './paths.js';
 import { scanSessions } from './sessions.js';
 import { readLiveSessions } from './registry.js';
 import { planDelete, deleteSession } from './deleter.js';
@@ -112,10 +113,18 @@ export function clearProject(cwd) {
   return clearRestoreTasks(cwd);
 }
 
-/** Fire and forget: `code <folder>`. Failure here is reported, never fatal. */
+/**
+ * Fire and forget: `code <folder>`. Failure here is reported, never fatal.
+ *
+ * Launched with the Claude session markers stripped. VSCode passes its own
+ * environment to every terminal it opens, so inheriting them turned each chat in
+ * that window into a child session with transcript saving off, including ones
+ * opened by hand long afterwards.
+ */
 export function openInVscode(cwd) {
   return new Promise((resolve) => {
-    execFile('code', [cwd], (err) => resolve(err ? { ok: false, error: err.message } : { ok: true }));
+    execFile('code', [cwd], { env: withoutClaudeMarkers() },
+      (err) => resolve(err ? { ok: false, error: err.message } : { ok: true }));
   });
 }
 
