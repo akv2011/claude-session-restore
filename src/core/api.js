@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import { scanSessions } from './sessions.js';
 import { readLiveSessions } from './registry.js';
 import { planDelete, deleteSession } from './deleter.js';
-import { readSnapshot, restorableSessions, groupByWorkspace } from './snapshot.js';
+import { readSnapshot, restorableSessions, restorableWorkspaces } from './snapshot.js';
 import { writeRestoreTasks, clearRestoreTasks } from '../restore/tasks.js';
 import {
   readAutoTaskSetting, enableAutoTasks,
@@ -51,7 +51,9 @@ export function getOverview() {
     restore: {
       source: restorable.source,
       capturedAt: restorable.capturedAt,
-      groups: groupByWorkspace(restorable.sessions),
+      // Each group carries its own source, so a project you closed an hour ago
+      // is offered and labelled rather than silently dropped.
+      groups: restorableWorkspaces(snapshot),
       count: restorable.sessions.length,
     },
     recorder: launchd.status(),

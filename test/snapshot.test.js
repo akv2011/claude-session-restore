@@ -16,8 +16,9 @@ import path from 'node:path';
 const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-snap-'));
 process.env.HOME = fakeHome;
 
-const { writeSnapshot, readSnapshot, restorableSessions, groupByCwd } =
-  await import('../src/core/snapshot.js');
+const {
+  writeSnapshot, readSnapshot, restorableSessions, restorableWorkspaces, groupByCwd,
+} = await import('../src/core/snapshot.js');
 
 const nine = Array.from({ length: 9 }, (_, i) => ({
   sessionId: `0000000${i}-1111-2222-3333-444444444444`,
@@ -29,7 +30,8 @@ test('a snapshot round-trips', () => {
   writeSnapshot(nine);
   const snap = readSnapshot();
   assert.equal(snap.sessions.length, 9);
-  assert.equal(snap.schemaVersion, 1);
+  assert.equal(snap.schemaVersion, 2);
+  assert.ok(snap.workspaces, 'memory is kept per workspace');
 });
 
 test('the live set is what restore offers while everything is running', () => {
@@ -44,18 +46,67 @@ test('a final empty poll at shutdown does NOT lose the restore set', () => {
   writeSnapshot([]); // processes died first, recorder polled once more
   const { sessions, source } = restorableSessions();
   assert.equal(sessions.length, 9, 'shutdown race wiped the restore set');
-  assert.equal(source, 'pre-shutdown');
+  assert.equal(source, 'mixed', 'every workspace is now closed, not current');
 });
 
-test('closing everything deliberately is respected, not resurrected', () => {
+test('a workspace closed long enough ago stops being offered', () => {
   writeSnapshot(nine);
   writeSnapshot([]);
   const stale = readSnapshot();
-  // Same state, but the empty poll came a long time after the last real one.
-  stale.capturedAt = stale.lastNonEmpty.capturedAt + 60 * 60 * 1000;
+  // Well past the retention window, so this is no longer work in progress.
+  const lastSeen = Math.max(...Object.values(stale.workspaces).map((w) => w.lastSeen));
+  stale.capturedAt = lastSeen + 72 * 60 * 60 * 1000;
   const { sessions, source } = restorableSessions(stale);
-  assert.equal(sessions.length, 0, 'a deliberate cleanup must not be restored');
+  assert.equal(sessions.length, 0, 'a long-abandoned workspace must not be restored');
   assert.equal(source, 'none');
+});
+
+test('closing ONE project keeps its chats while others keep running', () => {
+  const projects = [
+    { sessionId: 'a1', cwd: '/w/projects', name: 'A' },
+    { sessionId: 'a2', cwd: '/w/projects', name: 'B' },
+  ];
+  const other = [{ sessionId: 'b1', cwd: '/w/other', name: 'C' }];
+
+  writeSnapshot([...projects, ...other]);
+  // The projects window is closed; the other project is still open. A single
+  // global fallback never fired here, so those two chats were lost outright.
+  writeSnapshot(other);
+
+  const workspaces = restorableWorkspaces();
+  const closed = workspaces.find((w) => w.root === '/w/projects');
+  assert.ok(closed, 'the closed project must still be offered');
+  assert.equal(closed.sessions.length, 2);
+  assert.equal(closed.source, 'closed');
+
+  const live = workspaces.find((w) => w.root === '/w/other');
+  assert.equal(live.source, 'current');
+});
+
+test('a reopened workspace goes back to current with its new chats', () => {
+  writeSnapshot([{ sessionId: 'x', cwd: '/w/p', name: 'Old' }]);
+  writeSnapshot([]);
+  assert.equal(restorableWorkspaces()[0].source, 'closed');
+
+  writeSnapshot([{ sessionId: 'y', cwd: '/w/p', name: 'New' }]);
+  const [w] = restorableWorkspaces();
+  assert.equal(w.source, 'current');
+  assert.equal(w.sessions[0].name, 'New', 'stale chats must not linger');
+});
+
+test('a v1 snapshot is migrated rather than discarded', () => {
+  const dir = path.join(fakeHome, '.claude-restore');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+    schemaVersion: 1,
+    capturedAt: Date.now(),
+    sessions: [],
+    lastNonEmpty: { capturedAt: Date.now(), sessions: nine },
+  }));
+  const snap = readSnapshot();
+  assert.ok(snap, 'a v1 file must not be thrown away');
+  assert.equal(snap.schemaVersion, 2);
+  assert.equal(restorableSessions(snap).sessions.length, 9);
 });
 
 test('no snapshot at all means nothing to restore, never an error', () => {

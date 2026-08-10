@@ -151,7 +151,10 @@ function renderRestoreBanner() {
   // Scope the offer to what you are actually looking at. A global banner while
   // Documents/Work is selected offers to restore Desktop/Projects, which
   // reads as a bug even though it would have done the right thing.
-  const allGroups = restore.groups as Array<{ cwd: string; sessions: Session[] }>;
+  const allGroups = restore.groups as Array<{
+    cwd: string; root: string; sessions: Session[];
+    lastSeen: number | null; source: 'current' | 'closed';
+  }>;
   const groups = selected === null
     ? allGroups
     : allGroups.filter((g) => g.cwd === selected);
@@ -160,11 +163,17 @@ function renderRestoreBanner() {
   const count = groups.reduce((sum, g) => sum + g.sessions.length, 0);
   const scoped = selected !== null;
 
-  const when = restore.capturedAt
-    ? new Date(restore.capturedAt).toLocaleString(undefined, {
+  // A closed workspace is the interesting case: it says when you left it.
+  const closed = groups.filter((g) => g.source === 'closed');
+  const lastSeen = Math.max(...groups.map((g) => g.lastSeen ?? 0));
+  const when = lastSeen
+    ? new Date(lastSeen).toLocaleString(undefined, {
       weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
     })
     : 'unknown time';
+  const state1 = closed.length === groups.length
+    ? `closed ${ago(lastSeen)} ago`
+    : (closed.length ? `${closed.length} closed, rest running` : 'currently running');
 
   const names = groups.flatMap((g) => g.sessions.map((s) => s.name));
   const where = scoped
@@ -175,8 +184,8 @@ function renderRestoreBanner() {
   banner.className = 'restore';
   banner.innerHTML = `
     <div class="restore-body">
-      <div class="restore-title">${count} chat${count === 1 ? '' : 's'} ${restore.source === 'pre-shutdown' ? 'open at shutdown' : 'open now'} · ${where}</div>
-      <div class="restore-sub">${when} · ${restore.source === 'pre-shutdown' ? 'captured just before shutdown' : 'currently running'}</div>
+      <div class="restore-title">${count} chat${count === 1 ? '' : 's'} ${closed.length === groups.length ? 'from a closed window' : 'open now'} · ${where}</div>
+      <div class="restore-sub">${when} · ${state1}</div>
       <div class="restore-list">${escapeHtml(names.slice(0, 6).join(' · '))}${names.length > 6 ? ` · +${names.length - 6} more` : ''}</div>
     </div>
     <button class="btn btn-primary" id="do-restore">${scoped ? `Restore these ${count}` : 'Restore all'}</button>

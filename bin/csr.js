@@ -11,7 +11,7 @@ import {
   getOverview, getLive, previewDelete, performDelete,
   restoreProject, clearProject, recorder,
 } from '../src/core/api.js';
-import { restorableSessions, readSnapshot, groupByWorkspace } from '../src/core/snapshot.js';
+import { restorableSessions, readSnapshot, restorableWorkspaces } from '../src/core/snapshot.js';
 import { readAutoTaskSetting, enableAutoTasks } from '../src/core/api.js';
 import {
   setTerminalLocation, readTerminalLocation,
@@ -114,14 +114,18 @@ async function cmdRestore(args) {
     return;
   }
 
-  // Grouped by the folder you would open, not by exact cwd, so chats in
-  // subfolders land in one window instead of one window each.
-  const byCwd = new Map(groupByWorkspace(sessions).map((g) => [g.root, g.sessions]));
+  // Per workspace, so a project closed an hour ago is still offered and is
+  // labelled as closed rather than looking like it is still running.
+  const workspaces = restorableWorkspaces();
+  const byCwd = new Map(workspaces.map((w) => [w.root, w.sessions]));
 
-  console.log(`\n${BOLD}${sessions.length} chat(s) open at ${ago(capturedAt)}${RESET} ${DIM}(${source})${RESET}`);
-  for (const [cwd, group] of byCwd) {
-    console.log(`\n  ${cwd}`);
-    for (const session of group) console.log(`    ${session.name}`);
+  console.log(`\n${BOLD}${sessions.length} chat(s) across ${workspaces.length} folder(s)${RESET}`);
+  for (const workspace of workspaces) {
+    const tag = workspace.source === 'closed'
+      ? `${YELLOW}closed ${ago(workspace.lastSeen)}${RESET}`
+      : `${GREEN}running${RESET}`;
+    console.log(`\n  ${workspace.root}  ${tag}`);
+    for (const session of workspace.sessions) console.log(`    ${session.name}`);
   }
 
   if (!args.includes('--yes')) {
