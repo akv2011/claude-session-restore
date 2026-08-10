@@ -67,18 +67,20 @@ export function getOverview(options = {}) {
       skipped,
     },
     restore: {
-      source: restorable.source,
-      capturedAt: restorable.capturedAt,
-      // Each group carries its own source, so a project you closed an hour ago
-      // is offered and labelled rather than silently dropped.
+      // Exactly what the recorder saw live at the poll before those chats went.
+      // No transcript sweep: a window over recently-used files offered eleven
+      // chats across five folders, which is not what was open.
       groups: restorableWorkspaces(snapshot),
-      count: restorable.sessions.length,
+      count: restorableSessions(snapshot).sessions.length,
+      capturedAt: restorableSessions(snapshot).capturedAt,
+      source: restorableSessions(snapshot).source,
     },
     recorder: launchd.status(),
     autoTasks: readAutoTaskSetting(),
     persistence: readPersistentSessions(),
   };
 }
+
 
 export function getLive() {
   return readLiveSessions();

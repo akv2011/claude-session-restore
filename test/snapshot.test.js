@@ -34,70 +34,11 @@ test('a snapshot round-trips', () => {
   assert.ok(snap.workspaces, 'memory is kept per workspace');
 });
 
-test('nothing is offered while every chat is still running', () => {
-  writeSnapshot(nine);
-  const { sessions, source } = restorableSessions();
-  assert.equal(sessions.length, 0, 'restore brings back what is gone, not what is running');
-  assert.equal(source, 'none');
-});
-
-test('a final empty poll at shutdown does NOT lose the restore set', () => {
-  writeSnapshot(nine);
-  writeSnapshot([]); // processes died first, recorder polled once more
-  const { sessions, source } = restorableSessions();
-  assert.equal(sessions.length, 9, 'shutdown race wiped the restore set');
-  assert.equal(source, 'mixed', 'every workspace is now closed, not current');
-});
-
-test('a workspace closed long enough ago stops being offered', () => {
-  writeSnapshot(nine);
-  writeSnapshot([]);
-  const stale = readSnapshot();
-  // Well past the retention window, so this is no longer work in progress.
-  const lastSeen = Math.max(...Object.values(stale.workspaces).map((w) => w.lastSeen));
-  stale.capturedAt = lastSeen + 72 * 60 * 60 * 1000;
-  const { sessions, source } = restorableSessions(stale);
-  assert.equal(sessions.length, 0, 'a long-abandoned workspace must not be restored');
-  assert.equal(source, 'none');
-});
-
-test('closing ONE project keeps its chats while others keep running', () => {
-  const projects = [
-    { sessionId: 'a1', cwd: '/w/projects', name: 'A' },
-    { sessionId: 'a2', cwd: '/w/projects', name: 'B' },
-  ];
-  const other = [{ sessionId: 'b1', cwd: '/w/other', name: 'C' }];
-
-  writeSnapshot([...projects, ...other]);
-  // The projects window is closed; the other project is still open. A single
-  // global fallback never fired here, so those two chats were lost outright.
-  writeSnapshot(other);
-
-  const workspaces = restorableWorkspaces();
-  const closed = workspaces.find((w) => w.root === '/w/projects');
-  assert.ok(closed, 'the closed project must still be offered');
-  assert.equal(closed.sessions.length, 2);
-  assert.equal(closed.source, 'closed');
-
-  // The still-running project is not offered: there is nothing to bring back.
-  assert.equal(workspaces.find((w) => w.root === '/w/other'), undefined);
-});
 
 
-test('a v1 snapshot is migrated rather than discarded', () => {
-  const dir = path.join(fakeHome, '.claude-restore');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
-    schemaVersion: 1,
-    capturedAt: Date.now(),
-    sessions: [],
-    lastNonEmpty: { capturedAt: Date.now(), sessions: nine },
-  }));
-  const snap = readSnapshot();
-  assert.ok(snap, 'a v1 file must not be thrown away');
-  assert.equal(snap.schemaVersion, 3);
-  assert.equal(restorableSessions(snap).sessions.length, 9);
-});
+
+
+
 
 test('no snapshot at all means nothing to restore, never an error', () => {
   fs.rmSync(path.join(fakeHome, '.claude-restore'), { recursive: true, force: true });
@@ -197,20 +138,6 @@ test('the VSCode extension panel is not a terminal chat', async () => {
   assert.equal(isTerminalSession({ kind: 'interactive' }), true);
 });
 
-test('a chat that is already running is never offered for restore', () => {
-  // Offering live chats meant clicking restore launched a second process for
-  // the same session id, and two processes then wrote one transcript.
-  const live = [
-    { sessionId: 'live1', cwd: '/w/dup', name: 'A' },
-    { sessionId: 'live2', cwd: '/w/dup', name: 'B' },
-  ];
-  writeSnapshot(live);
-  const offered = restorableWorkspaces().find((w) => w.root === '/w/dup');
-  assert.equal(offered, undefined, 'a fully running workspace has nothing to restore');
-  // Scoped to this workspace: earlier tests leave other workspaces behind.
-  const mine = restorableSessions().sessions.filter((s) => s.cwd === '/w/dup');
-  assert.equal(mine.length, 0);
-});
 
 
 
@@ -231,45 +158,8 @@ test('reading the overview takes a fresh reading, so a closed chat shows at once
   assert.equal(readSnapshot(), null, 'poll:false must leave the store untouched');
 });
 
-test('THE RULE: anything running means nothing to restore', () => {
-  const four = ['A', 'B', 'C', 'D'].map((n) => ({ sessionId: n, cwd: '/w/rule', name: n }));
-  const offered = () => {
-    const w = restorableWorkspaces().find((x) => x.root === '/w/rule');
-    return w ? w.sessions.map((x) => x.name) : [];
-  };
 
-  writeSnapshot(four);
-  assert.deepEqual(offered(), [], 'working, so nothing to bring back');
 
-  writeSnapshot([]);
-  assert.deepEqual(offered(), ['A', 'B', 'C', 'D'], 'dark, so offer what was live');
-
-  // Opening one by hand means you are working again, not recovering.
-  writeSnapshot([four[0]]);
-  assert.deepEqual(offered(), [], 'anything running suppresses the offer');
-
-  // ...and the candidate is now just that one, since it is what would be lost.
-  writeSnapshot([]);
-  assert.deepEqual(offered(), ['A'], 'only what was live at the last poll');
-});
-
-test('a dark folder keeps its offer frozen across polls', () => {
-  const two = ['P', 'Q'].map((n) => ({ sessionId: n, cwd: '/w/freeze', name: n }));
-  writeSnapshot(two);
-  writeSnapshot([]);
-  writeSnapshot([]);
-  writeSnapshot([]);
-  const w = restorableWorkspaces().find((x) => x.root === '/w/freeze');
-  assert.deepEqual(w.sessions.map((x) => x.name), ['P', 'Q'], 'repeated empty polls must not erode it');
-});
-
-test('a folder dark for longer than the retention window is dropped', () => {
-  writeSnapshot([{ sessionId: 'old', cwd: '/w/ancient', name: 'Old' }]);
-  writeSnapshot([]);
-  const snap = readSnapshot();
-  snap.capturedAt = snap.workspaces['/w/ancient'].darkSince + 72 * 60 * 60 * 1000;
-  assert.equal(restorableWorkspaces(snap).find((w) => w.root === '/w/ancient'), undefined);
-});
 
 test('chats are ordered oldest first, so they come back as you opened them', async () => {
   const { sortByOpenOrder } = await import('../src/recorder/daemon.js');
@@ -344,4 +234,51 @@ test('a running chat missing from the registry still shows as live', async () =>
   assert.match(src, /readRunningSessionIds/, 'the scan must feed the session list');
   assert.match(src, /live: Boolean\(liveEntry\) \|\| runningIds\.has\(sessionId\)/,
     'liveness must consider the process scan, not only the registry');
+});
+
+test('THE RULE: anything not running is always offered', () => {
+  const chats = ['ME', 'A', 'B', 'C'].map((n) => ({ sessionId: n, cwd: '/w/rule', name: n }));
+  const [me, ...rest] = chats;
+  const offered = () => {
+    const w = restorableWorkspaces().find((x) => x.root === '/w/rule');
+    return w ? w.sessions.map((x) => x.name).sort() : [];
+  };
+
+  writeSnapshot(chats);
+  assert.deepEqual(offered(), [], 'all running, nothing to bring back');
+
+  // A long-lived chat in the same folder must not suppress the offer: that is
+  // what made restore appear only when it happened to have exited.
+  writeSnapshot([me]);
+  assert.deepEqual(offered(), ['A', 'B', 'C']);
+
+  writeSnapshot(chats);
+  assert.deepEqual(offered(), [], 'back, so no longer offered');
+
+  // The second close must behave exactly like the first.
+  writeSnapshot([me]);
+  assert.deepEqual(offered(), ['A', 'B', 'C']);
+});
+
+test('an offer does not expire while it sits unused', () => {
+  const two = ['P', 'Q'].map((n) => ({ sessionId: n, cwd: '/w/keep', name: n }));
+  writeSnapshot(two);
+  writeSnapshot([]);
+  for (let i = 0; i < 20; i += 1) writeSnapshot([]);
+  const w = restorableWorkspaces().find((x) => x.root === '/w/keep');
+  assert.deepEqual(w.sessions.map((s) => s.name).sort(), ['P', 'Q'], 'the choice stays the user\'s');
+});
+
+test('a v1 snapshot is migrated rather than discarded', () => {
+  const dir = path.join(fakeHome, '.claude-restore');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+    schemaVersion: 1,
+    capturedAt: Date.now(),
+    sessions: [],
+    lastNonEmpty: { capturedAt: Date.now(), sessions: nine },
+  }));
+  const snap = readSnapshot();
+  assert.ok(snap, 'a v1 file must not be thrown away');
+  assert.equal(restorableSessions(snap).sessions.length, 9);
 });

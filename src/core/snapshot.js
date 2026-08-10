@@ -40,13 +40,12 @@ export function readSnapshot() {
     if (raw.schemaVersion === 1) {
       const workspaces = {};
       for (const group of groupByWorkspace(raw.lastNonEmpty?.sessions ?? [])) {
-        // These chats were remembered because they had gone, so they are the
-        // set to bring back once the folder is dark.
+        // Remembered because they had gone, so they are the set from before.
         workspaces[group.root] = {
           lastSeen: raw.lastNonEmpty?.capturedAt ?? raw.capturedAt,
           sessions: [],
           lastLiveSet: group.sessions,
-          darkSince: raw.lastNonEmpty?.capturedAt ?? raw.capturedAt,
+          closedAt: raw.lastNonEmpty?.capturedAt ?? raw.capturedAt,
         };
       }
       return { ...raw, schemaVersion: SCHEMA_VERSION, workspaces };
@@ -82,26 +81,30 @@ export function writeSnapshot(sessions) {
   for (const root of roots) {
     const prior = workspaces[root];
     const live = liveByRoot.get(root) ?? [];
+    const liveIds = new Set(live.map((session) => session.sessionId));
 
-    if (live.length) {
-      // Working here. The live set is what would be lost if the folder went
-      // dark, so it becomes the candidate, replacing whatever came before.
-      workspaces[root] = { lastSeen: now, sessions: live, lastLiveSet: live };
-    } else {
-      // Gone dark. Freeze whatever was live at the previous poll; that is the
-      // set to bring back, and it must not be touched while the folder is empty.
-      workspaces[root] = {
-        lastSeen: prior?.lastSeen ?? now,
-        sessions: [],
-        lastLiveSet: prior?.lastLiveSet ?? [],
-        darkSince: prior?.darkSince ?? now,
-      };
-    }
+    const vanished = (prior?.sessions ?? []).filter((s) => !liveIds.has(s.sessionId));
+    const outstanding = (prior?.lastLiveSet ?? []).some((s) => !liveIds.has(s.sessionId));
+
+    // The offer is one snapshot: the live set from the poll before chats went
+    // away. It is taken on the poll where something vanishes, held while any of
+    // it is still missing, and replaced by the current set once it is all back.
+    let lastLiveSet;
+    if (vanished.length) lastLiveSet = prior?.sessions ?? live;
+    else if (outstanding) lastLiveSet = prior.lastLiveSet;
+    else lastLiveSet = live;
+
+    workspaces[root] = {
+      lastSeen: live.length ? now : (prior?.lastSeen ?? now),
+      sessions: live,
+      lastLiveSet,
+      ...(vanished.length ? { closedAt: now } : prior?.closedAt ? { closedAt: prior.closedAt } : {}),
+    };
   }
 
   for (const [root, entry] of Object.entries(workspaces)) {
-    const when = entry.darkSince ?? entry.lastSeen ?? 0;
-    if (!entry.sessions.length && now - when > RETAIN_MS) delete workspaces[root];
+    if (entry.sessions.length) continue;
+    if (now - (entry.lastSeen ?? 0) > RETAIN_MS) delete workspaces[root];
   }
 
   const payload = { schemaVersion: SCHEMA_VERSION, capturedAt: now, sessions, workspaces };
@@ -116,6 +119,7 @@ export function writeSnapshot(sessions) {
 const RETAIN_MS = 48 * 60 * 60 * 1000;
 
 
+
 /**
  * What restore should offer, per workspace.
  *
@@ -127,28 +131,29 @@ const RETAIN_MS = 48 * 60 * 60 * 1000;
  *                  lastSeen:number|null, source:'closed'}>} only workspaces with
  *   something to bring back are returned.
  */
-export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAIN_MS,
-  runningIds = readRunningSessionIds()) {
+/**
+ * @param {object} [snapshot]
+ * @param {unknown} [_reserved] unused; kept so callers can inject ids positionally
+ * @param {Set<string>} [runningIds] injected by tests, scanned otherwise
+ */
+export function restorableWorkspaces(snapshot = readSnapshot(), _reserved, runningIds) {
   if (!snapshot) return [];
-  const now = snapshot.capturedAt ?? Date.now();
+  const running = runningIds ?? readRunningSessionIds();
 
   return Object.entries(snapshot.workspaces ?? {})
-    // Anything running here means you are working, not recovering.
-    .filter(([, entry]) => !entry.sessions?.length)
-    .map(([root, entry]) => ({
-      root,
-      cwd: root,
-      // Never offer a chat that is provably running, nor one whose transcript
-      // is being written right now. The registry sometimes lacks a file for a
-      // live session and a picker-started session carries no id in argv, so
-      // neither signal alone is enough. Suppressing is the safe direction: a
-      // missed offer is an inconvenience, a wrong one starts a second copy.
-      sessions: (entry.lastLiveSet ?? [])
-        .filter((x) => !runningIds.has(x.sessionId) && !isBeingWritten(x.sessionId)),
-      lastSeen: entry.darkSince ?? entry.lastSeen ?? null,
-      source: 'closed',
-    }))
-    .filter((w) => w.sessions.length && now - (w.lastSeen ?? 0) <= retainMs)
+    .map(([root, entry]) => {
+      const liveIds = new Set((entry.sessions ?? []).map((s) => s.sessionId));
+      const offer = (entry.lastLiveSet ?? []).filter((s) => !liveIds.has(s.sessionId)
+        && !running.has(String(s.sessionId).toLowerCase()));
+      return {
+        root,
+        cwd: root,
+        sessions: offer,
+        lastSeen: entry.closedAt ?? entry.lastSeen ?? null,
+        source: entry.sessions?.length ? 'partial' : 'closed',
+      };
+    })
+    .filter((w) => w.sessions.length)
     .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
 }
 

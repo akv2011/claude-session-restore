@@ -32,8 +32,20 @@ type Project = {
 
 let state: { projects: Project[]; totals: any; restore: any; recorder: any } | null = null;
 let selected: string | null = null;
-/** Dismissals are per scope: '*' for all chats, otherwise the project cwd. */
+/**
+ * Dismissals are keyed by scope AND by the offer itself.
+ *
+ * Keying on scope alone meant one Dismiss silenced that folder for the rest of
+ * the session, so a chat closed twenty minutes later never produced a banner and
+ * the app looked broken. Dismissing an offer should dismiss that offer, not
+ * every future one.
+ */
 const dismissed = new Set<string>();
+
+/** Identity of an offer: the scope plus exactly which chats are on it. */
+function offerKey(scope: string, sessions: Session[]) {
+  return `${scope}::${sessions.map((s) => s.sessionId).sort().join(',')}`;
+}
 
 /** 'recent' is the default; the choice survives a restart. */
 type SortMode = 'recent' | 'name';
@@ -149,7 +161,7 @@ function renderRestoreBanner() {
   const host = $('restore-banner');
   host.innerHTML = '';
   const restore = state!.restore;
-  if (dismissed.has(selected ?? '*') || !restore.count) return;
+  if (!restore.count) return;
 
   // Scope the offer to what you are actually looking at. A global banner while
   // Documents/Work is selected offers to restore Desktop/Projects, which
@@ -165,6 +177,8 @@ function renderRestoreBanner() {
 
   const count = groups.reduce((sum, g) => sum + g.sessions.length, 0);
   const scoped = selected !== null;
+  const key = offerKey(selected ?? '*', groups.flatMap((g) => g.sessions));
+  if (dismissed.has(key)) return;
 
   // A closed workspace is the interesting case: it says when you left it.
   const closed = groups.filter((g) => g.source === 'closed');
@@ -241,13 +255,13 @@ function renderRestoreBanner() {
       toast(`${failed.length} folder(s) failed: ${failed[0].error}`, 'error');
     } else {
       toast(`Wrote restore tasks for ${written.length} folder(s). VSCode will spawn the terminals.`);
-      dismissed.add(selected ?? '*');
+      dismissed.add(key);
       renderRestoreBanner();
     }
     button.disabled = false;
     button.textContent = scoped ? `Restore these ${count}` : 'Restore all';
   };
-  $('dismiss-restore').onclick = () => { dismissed.add(selected ?? '*'); renderRestoreBanner(); };
+  $('dismiss-restore').onclick = () => { dismissed.add(key); renderRestoreBanner(); };
 }
 
 /**

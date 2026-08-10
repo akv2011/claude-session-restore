@@ -80,9 +80,10 @@ export function sweepFinishedRestores() {
 
   const cleared = [];
   for (const [root, entry] of Object.entries(snapshot.workspaces ?? {})) {
-    // A dark folder still has an offer outstanding, so its tasks may yet be
-    // needed. Only sweep once something is running there again.
-    if (!entry.sessions?.length && entry.lastLiveSet?.length) continue;
+    // An outstanding offer means those tasks may yet be needed.
+    const liveIds = new Set((entry.sessions ?? []).map((s) => s.sessionId));
+    const outstanding = (entry.lastLiveSet ?? []).some((s) => !liveIds.has(s.sessionId));
+    if (outstanding) continue;
     try {
       const { removed } = clearRestoreTasks(root);
       if (removed > 0) {
