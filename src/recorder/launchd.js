@@ -1,0 +1,138 @@
+/**
+ * Keep the recorder running across logins, via launchd.
+ *
+ * Two modes: `interval` hands the timer to launchd and runs a one-shot tick, so
+ * nothing stays resident; `resident` keeps a process alive polling itself,
+ * which costs roughly the Node runtime's memory floor for no extra benefit.
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { STATE_DIR } from '../core/paths.js';
+
+export const LABEL = 'dev.csr.claude-session-restore';
+
+const AGENTS_DIR = path.join(os.homedir(), 'Library', 'LaunchAgents');
+export const PLIST_PATH = path.join(AGENTS_DIR, `${LABEL}.plist`);
+
+function daemonEntry() {
+  return fileURLToPath(new URL('./daemon.js', import.meta.url));
+}
+
+/**
+ *   resident  KeepAlive process polling itself. Roughly 40 MB RSS, 0.0% CPU.
+ *             Snapshot never more than 5s stale.
+ *   interval  launchd owns the timer and runs a one-shot tick. Nothing stays
+ *             resident between ticks. Snapshot can be up to intervalSeconds
+ *             stale, which is harmless because sessions live for hours.
+ *
+ * @param {{mode?:'resident'|'interval', intervalSeconds?:number,
+ *          nodePath?:string, entry?:string}} [options]
+ */
+export function buildPlist({
+  mode = 'interval',
+  intervalSeconds = 30,
+  nodePath = process.execPath,
+  entry = daemonEntry(),
+} = {}) {
+  const args = mode === 'interval'
+    ? `    <string>${nodePath}</string>\n    <string>${entry}</string>\n    <string>--once</string>`
+    : `    <string>${nodePath}</string>\n    <string>${entry}</string>`;
+
+  const schedule = mode === 'interval'
+    ? `  <key>StartInterval</key><integer>${intervalSeconds}</integer>\n  <key>RunAtLoad</key><true/>`
+    : '  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>';
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+${args}
+  </array>
+${schedule}
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>StandardOutPath</key><string>${path.join(STATE_DIR, 'launchd.out.log')}</string>
+  <key>StandardErrorPath</key><string>${path.join(STATE_DIR, 'launchd.err.log')}</string>
+</dict>
+</plist>
+`;
+}
+
+export function install(options = {}) {
+  fs.mkdirSync(AGENTS_DIR, { recursive: true });
+  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.writeFileSync(PLIST_PATH, buildPlist(options), 'utf8');
+
+  const uid = process.getuid();
+  // bootout first so reinstalling picks up a changed plist.
+  try {
+    execFileSync('launchctl', ['bootout', `gui/${uid}/${LABEL}`], { stdio: 'ignore' });
+  } catch { /* not loaded yet */ }
+  execFileSync('launchctl', ['bootstrap', `gui/${uid}`, PLIST_PATH], { stdio: 'inherit' });
+  return PLIST_PATH;
+}
+
+export function uninstall() {
+  const uid = process.getuid();
+  try {
+    execFileSync('launchctl', ['bootout', `gui/${uid}/${LABEL}`], { stdio: 'ignore' });
+  } catch { /* already gone */ }
+  try {
+    fs.unlinkSync(PLIST_PATH);
+  } catch { /* already gone */ }
+}
+
+/**
+ * Is the recorder actually protecting you?
+ *
+ * "running" cannot mean "a process exists right now". In interval mode nothing
+ * is resident between ticks, so a PID check would report the recorder as off
+ * ~99% of the time and the UI would scream about a working setup. What matters
+ * is whether launchd has the agent loaded, so that is what `armed` reports.
+ */
+export function status() {
+  const uid = process.getuid();
+  const installed = fs.existsSync(PLIST_PATH);
+  const mode = readMode();
+
+  try {
+    // stderr is swallowed: launchctl prints "Could not find service" when the
+    // agent simply is not installed, which is a normal state, not an error.
+    const out = execFileSync('launchctl', ['print', `gui/${uid}/${LABEL}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const pid = out.match(/\bpid = (\d+)/)?.[1] ?? null;
+    return {
+      installed: true,
+      loaded: true,
+      armed: true,
+      mode,
+      running: pid !== null,
+      pid: pid ? Number(pid) : null,
+    };
+  } catch {
+    return { installed, loaded: false, armed: false, mode, running: false, pid: null };
+  }
+}
+
+/** Which mode the installed agent uses, read back from the plist itself. */
+function readMode() {
+  try {
+    const plist = fs.readFileSync(PLIST_PATH, 'utf8');
+    if (plist.includes('<key>StartInterval</key>')) {
+      const seconds = plist.match(/<key>StartInterval<\/key><integer>(\d+)<\/integer>/)?.[1];
+      return { kind: 'interval', intervalSeconds: seconds ? Number(seconds) : null };
+    }
+    return { kind: 'resident', intervalSeconds: null };
+  } catch {
+    return { kind: null, intervalSeconds: null };
+  }
+}

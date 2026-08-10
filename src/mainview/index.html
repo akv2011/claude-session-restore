@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Claude Session Restore</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="titlebar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Session Restore</span>
+    </div>
+    <div class="recorder" id="recorder" data-state="unknown">
+      <span class="recorder-dot" aria-hidden="true"></span>
+      <span class="recorder-label" id="recorder-label">checking recorder</span>
+      <button class="recorder-action" id="recorder-action" hidden>arm</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <aside class="rail">
+      <div class="rail-head">
+        <span class="eyebrow">Projects</span>
+        <span class="eyebrow-count" id="project-count"></span>
+      </div>
+      <nav class="rail-list" id="rail-list"></nav>
+      <div class="rail-foot" id="rail-foot"></div>
+    </aside>
+
+    <section class="panel">
+      <div id="restore-banner"></div>
+
+      <div class="panel-head">
+        <h1 class="panel-title" id="panel-title">All chats</h1>
+        <div class="panel-meta" id="panel-meta"></div>
+      </div>
+
+      <div class="table-head" aria-hidden="true">
+        <span class="col-name">Chat</span>
+        <span class="col-src">Source</span>
+        <span class="col-size">Size</span>
+        <span class="col-time">Last used</span>
+        <span class="col-act"></span>
+      </div>
+
+      <div class="rows" id="rows"></div>
+    </section>
+  </main>
+
+  <div class="sheet-scrim" id="sheet-scrim" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <header class="sheet-head">
+        <span class="eyebrow danger">Move to Trash</span>
+        <h2 class="sheet-title" id="sheet-title"></h2>
+        <p class="sheet-sub" id="sheet-sub"></p>
+      </header>
+      <div class="sheet-body" id="sheet-body"></div>
+      <footer class="sheet-foot">
+        <p class="sheet-note">Everything goes to the Finder Trash. Nothing is erased.</p>
+        <div class="sheet-actions">
+          <button class="btn" id="sheet-cancel">Cancel</button>
+          <button class="btn btn-danger" id="sheet-confirm">Move to Trash</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="index.js"></script>
+</body>
+</html>
