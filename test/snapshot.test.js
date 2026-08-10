@@ -83,25 +83,6 @@ test('closing ONE project keeps its chats while others keep running', () => {
   assert.equal(workspaces.find((w) => w.root === '/w/other'), undefined);
 });
 
-test('a different chat does not count as restoring the one you closed', () => {
-  writeSnapshot([{ sessionId: 'x', cwd: '/w/p', name: 'Old' }]);
-  writeSnapshot([]);
-  const closed = restorableWorkspaces().find((w) => w.root === '/w/p');
-  assert.equal(closed.source, 'closed');
-
-  // Starting some other chat in the same folder is not the chat you lost, so
-  // the hold stays and Old is still on offer.
-  writeSnapshot([{ sessionId: 'y', cwd: '/w/p', name: 'New' }]);
-  const held = restorableWorkspaces().find((w) => w.root === '/w/p');
-  assert.equal(held.source, 'closed');
-  assert.deepEqual(held.sessions.map((s) => s.name), ['Old']);
-
-  // Bringing Old back releases it from the hold. New has now gone, so it takes
-  // its place: anything that disappears is restorable.
-  writeSnapshot([{ sessionId: 'x', cwd: '/w/p', name: 'Old' }]);
-  const after = restorableWorkspaces().find((w) => w.root === '/w/p');
-  assert.deepEqual(after.sessions.map((s) => s.name), ['New']);
-});
 
 test('a v1 snapshot is migrated rather than discarded', () => {
   const dir = path.join(fakeHome, '.claude-restore');
@@ -202,59 +183,8 @@ test('a chat run in the home directory does not swallow every project', async ()
   assert.equal(groups.length, 3, 'home must not act as a workspace root');
 });
 
-test('the restore point survives opening chats by hand', () => {
-  // The rule: what was tracked while alive is the candidate, and it is not
-  // overwritten until those chats are actually running again. Without it,
-  // opening one chat after closing a window discarded the rest.
-  const eight = Array.from({ length: 8 }, (_, i) => ({
-    sessionId: `h${i}`, cwd: '/w/hold', name: `Chat_${i}`,
-  }));
-  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/hold');
 
-  writeSnapshot(eight);
-  assert.equal(offers(), undefined, 'nothing to restore while they all run');
 
-  writeSnapshot([]);
-  assert.equal(offers().sessions.length, 8, 'a freshly closed window must offer everything');
-  assert.equal(offers().source, 'closed');
-
-  writeSnapshot([eight[0]]);
-  assert.equal(offers().sessions.length, 7, 'opening one by hand must not discard the other seven');
-
-  writeSnapshot(eight.slice(0, 5));
-  assert.equal(offers().sessions.length, 3, 'only what is still missing is offered');
-
-  writeSnapshot(eight);
-  assert.equal(offers(), undefined, 'fully restored means nothing left to restore');
-});
-
-test('after the hold is released, normal tracking resumes', () => {
-  const three = Array.from({ length: 3 }, (_, i) => ({
-    sessionId: `r${i}`, cwd: '/w/resume', name: `C${i}`,
-  }));
-  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/resume');
-
-  writeSnapshot(three);
-  writeSnapshot([]);
-  writeSnapshot(three);                 // fully restored, hold released
-  writeSnapshot(three.slice(0, 2));     // you close one deliberately
-  // Restore cannot tell "finished with it" from "lost it", and being unable to
-  // bring a chat back is the worse failure, so a closed chat is offered. The
-  // banner is dismissible, and the offer expires after RETAIN_MS.
-  assert.deepEqual(offers().sessions.map((s) => s.name), ['C2']);
-});
-
-test('a restored chat is never offered twice', () => {
-  const two = [
-    { sessionId: 'd1', cwd: '/w/dupe', name: 'A' },
-    { sessionId: 'd2', cwd: '/w/dupe', name: 'B' },
-  ];
-  writeSnapshot(two);
-  writeSnapshot([]);
-  writeSnapshot([two[0]]);
-  const offered = restorableWorkspaces().find((w) => w.root === '/w/dupe').sessions;
-  assert.deepEqual(offered.map((s) => s.sessionId), ['d2'], 'the running chat must not be re-offered');
-});
 
 test('the VSCode extension panel is not a terminal chat', async () => {
   const { isTerminalSession } = await import('../src/core/registry.js');
@@ -282,64 +212,9 @@ test('a chat that is already running is never offered for restore', () => {
   assert.equal(mine.length, 0);
 });
 
-test('only the chats that are gone are offered after a partial restore', () => {
-  const two = [
-    { sessionId: 'p1', cwd: '/w/part', name: 'A' },
-    { sessionId: 'p2', cwd: '/w/part', name: 'B' },
-  ];
-  writeSnapshot(two);
-  writeSnapshot([]);
-  writeSnapshot([two[0]]);      // A is back, B is not
-  const offered = restorableWorkspaces().find((w) => w.root === '/w/part');
-  assert.deepEqual(offered.sessions.map((s) => s.sessionId), ['p2']);
-});
 
-test('closing some chats is remembered even while others keep running', () => {
-  // The workspace never empties here, so waiting for emptiness captured nothing.
-  const four = Array.from({ length: 4 }, (_, i) => ({
-    sessionId: `v${i}`, cwd: '/w/vanish', name: `C${i}`,
-  }));
-  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/vanish');
 
-  writeSnapshot(four);
-  assert.equal(offers(), undefined, 'nothing gone yet');
 
-  writeSnapshot([four[0]]);           // you close three, one stays open
-  assert.deepEqual(offers().sessions.map((s) => s.name).sort(), ['C1', 'C2', 'C3']);
-});
-
-test('a later close is captured even when a restore point already exists', () => {
-  // This lost real chats: with a hold in place the capture was skipped, so a
-  // shutdown left the stale hold on offer and dropped what was actually open.
-  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/later');
-  const a = { sessionId: 'l1', cwd: '/w/later', name: 'Old' };
-  const b = { sessionId: 'l2', cwd: '/w/later', name: 'New' };
-
-  writeSnapshot([a]);
-  writeSnapshot([]);                  // Old closes, hold = [Old]
-  assert.deepEqual(offers().sessions.map((s) => s.name), ['Old']);
-
-  writeSnapshot([b]);                 // you work on something else
-  writeSnapshot([]);                  // and close that too
-  assert.deepEqual(offers().sessions.map((s) => s.name).sort(), ['New', 'Old'],
-    'the newly closed chat must join the hold, not be dropped');
-});
-
-test('a chat that comes back leaves the hold', () => {
-  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/back');
-  const one = { sessionId: 'b1', cwd: '/w/back', name: 'A' };
-  const two = { sessionId: 'b2', cwd: '/w/back', name: 'B' };
-
-  writeSnapshot([one, two]);
-  writeSnapshot([]);
-  assert.equal(offers().sessions.length, 2);
-
-  writeSnapshot([one]);
-  assert.deepEqual(offers().sessions.map((s) => s.name), ['B']);
-
-  writeSnapshot([one, two]);
-  assert.equal(offers(), undefined, 'everything back means nothing to restore');
-});
 
 test('reading the overview takes a fresh reading, so a closed chat shows at once', async () => {
   // paths.js resolves HOME once at import, so this reuses the fixture home
@@ -354,4 +229,44 @@ test('reading the overview takes a fresh reading, so a closed chat shows at once
   fs.rmSync(path.join(fakeHome, '.claude-restore'), { recursive: true, force: true });
   api.getOverview({ poll: false });
   assert.equal(readSnapshot(), null, 'poll:false must leave the store untouched');
+});
+
+test('THE RULE: anything running means nothing to restore', () => {
+  const four = ['A', 'B', 'C', 'D'].map((n) => ({ sessionId: n, cwd: '/w/rule', name: n }));
+  const offered = () => {
+    const w = restorableWorkspaces().find((x) => x.root === '/w/rule');
+    return w ? w.sessions.map((x) => x.name) : [];
+  };
+
+  writeSnapshot(four);
+  assert.deepEqual(offered(), [], 'working, so nothing to bring back');
+
+  writeSnapshot([]);
+  assert.deepEqual(offered(), ['A', 'B', 'C', 'D'], 'dark, so offer what was live');
+
+  // Opening one by hand means you are working again, not recovering.
+  writeSnapshot([four[0]]);
+  assert.deepEqual(offered(), [], 'anything running suppresses the offer');
+
+  // ...and the candidate is now just that one, since it is what would be lost.
+  writeSnapshot([]);
+  assert.deepEqual(offered(), ['A'], 'only what was live at the last poll');
+});
+
+test('a dark folder keeps its offer frozen across polls', () => {
+  const two = ['P', 'Q'].map((n) => ({ sessionId: n, cwd: '/w/freeze', name: n }));
+  writeSnapshot(two);
+  writeSnapshot([]);
+  writeSnapshot([]);
+  writeSnapshot([]);
+  const w = restorableWorkspaces().find((x) => x.root === '/w/freeze');
+  assert.deepEqual(w.sessions.map((x) => x.name), ['P', 'Q'], 'repeated empty polls must not erode it');
+});
+
+test('a folder dark for longer than the retention window is dropped', () => {
+  writeSnapshot([{ sessionId: 'old', cwd: '/w/ancient', name: 'Old' }]);
+  writeSnapshot([]);
+  const snap = readSnapshot();
+  snap.capturedAt = snap.workspaces['/w/ancient'].darkSince + 72 * 60 * 60 * 1000;
+  assert.equal(restorableWorkspaces(snap).find((w) => w.root === '/w/ancient'), undefined);
 });

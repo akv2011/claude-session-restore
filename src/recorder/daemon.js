@@ -67,8 +67,9 @@ export function sweepFinishedRestores() {
 
   const cleared = [];
   for (const [root, entry] of Object.entries(snapshot.workspaces ?? {})) {
-    // Still waiting on chats to come back: the tasks may yet be needed.
-    if (entry.restorePoint?.sessions?.length) continue;
+    // A dark folder still has an offer outstanding, so its tasks may yet be
+    // needed. Only sweep once something is running there again.
+    if (!entry.sessions?.length && entry.lastLiveSet?.length) continue;
     try {
       const { removed } = clearRestoreTasks(root);
       if (removed > 0) {

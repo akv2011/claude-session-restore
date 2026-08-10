@@ -9,9 +9,14 @@
  * Writes are atomic (temp file plus rename) because the failure mode being
  * defended against is literally the machine losing power mid write.
  *
- * Memory is per workspace rather than one global snapshot. A single global
- * fallback only rescued the case where everything died at once; closing one
- * project while others kept running dropped that project's chats silently.
+ * Memory is per workspace rather than one global snapshot, so closing one
+ * project while others keep running does not lose it.
+ *
+ * The rule is deliberately simple: while anything is running in a folder there
+ * is nothing to restore, and once the folder goes dark the set that was live at
+ * the previous poll is what comes back. Earlier attempts held individual chats
+ * across partial closes, which meant chats you had moved on from kept being
+ * offered for days.
  */
 
 import fs from 'node:fs';
@@ -32,16 +37,13 @@ export function readSnapshot() {
     if (raw.schemaVersion === 1) {
       const workspaces = {};
       for (const group of groupByWorkspace(raw.lastNonEmpty?.sessions ?? [])) {
-        // These chats were remembered precisely because they had gone, so they
-        // are a restore point. Recording them as live would make restore think
-        // there is nothing to bring back.
+        // These chats were remembered because they had gone, so they are the
+        // set to bring back once the folder is dark.
         workspaces[group.root] = {
           lastSeen: raw.lastNonEmpty?.capturedAt ?? raw.capturedAt,
           sessions: [],
-          restorePoint: {
-            sessions: group.sessions,
-            closedAt: raw.lastNonEmpty?.capturedAt ?? raw.capturedAt,
-          },
+          lastLiveSet: group.sessions,
+          darkSince: raw.lastNonEmpty?.capturedAt ?? raw.capturedAt,
         };
       }
       return { ...raw, schemaVersion: SCHEMA_VERSION, workspaces };
@@ -77,43 +79,26 @@ export function writeSnapshot(sessions) {
   for (const root of roots) {
     const prior = workspaces[root];
     const live = liveByRoot.get(root) ?? [];
-    const liveIds = new Set(live.map((session) => session.sessionId));
 
-    // Any chat that was running last poll and is not now has gone, and going is
-    // what makes it restorable. Capturing only when the whole workspace emptied
-    // was wrong twice over: closing some chats while one stayed open captured
-    // nothing, and once a restore point existed the capture was skipped
-    // entirely, so a later shutdown left stale chats on offer and lost the real
-    // ones.
-    const vanished = (prior?.sessions ?? []).filter((s) => !liveIds.has(s.sessionId));
-
-    // Whatever is already held stays held until it is running again.
-    const stillMissing = (prior?.restorePoint?.sessions ?? [])
-      .filter((s) => !liveIds.has(s.sessionId));
-
-    const held = [];
-    const seen = new Set();
-    for (const session of [...vanished, ...stillMissing]) {
-      if (seen.has(session.sessionId)) continue;
-      seen.add(session.sessionId);
-      held.push(session);
+    if (live.length) {
+      // Working here. The live set is what would be lost if the folder went
+      // dark, so it becomes the candidate, replacing whatever came before.
+      workspaces[root] = { lastSeen: now, sessions: live, lastLiveSet: live };
+    } else {
+      // Gone dark. Freeze whatever was live at the previous poll; that is the
+      // set to bring back, and it must not be touched while the folder is empty.
+      workspaces[root] = {
+        lastSeen: prior?.lastSeen ?? now,
+        sessions: [],
+        lastLiveSet: prior?.lastLiveSet ?? [],
+        darkSince: prior?.darkSince ?? now,
+      };
     }
-
-    workspaces[root] = {
-      lastSeen: live.length ? now : (prior?.lastSeen ?? now),
-      sessions: live,
-      ...(held.length ? {
-        restorePoint: {
-          sessions: held,
-          closedAt: vanished.length ? now : (prior?.restorePoint?.closedAt ?? now),
-        },
-      } : {}),
-    };
   }
 
   for (const [root, entry] of Object.entries(workspaces)) {
-    const when = entry.restorePoint?.closedAt ?? entry.lastSeen ?? 0;
-    if (now - when > RETAIN_MS) delete workspaces[root];
+    const when = entry.darkSince ?? entry.lastSeen ?? 0;
+    if (!entry.sessions.length && now - when > RETAIN_MS) delete workspaces[root];
   }
 
   const payload = { schemaVersion: SCHEMA_VERSION, capturedAt: now, sessions, workspaces };
@@ -126,6 +111,7 @@ export function writeSnapshot(sessions) {
 
 /** How long a closed workspace stays offered for restore. */
 const RETAIN_MS = 48 * 60 * 60 * 1000;
+
 
 /**
  * What restore should offer, per workspace.
@@ -143,37 +129,16 @@ export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAI
   const now = snapshot.capturedAt ?? Date.now();
 
   return Object.entries(snapshot.workspaces ?? {})
-    .map(([root, entry]) => {
-      const held = entry.restorePoint;
-      const liveIds = new Set((entry.sessions ?? []).map((s) => s.sessionId));
-
-      if (held) {
-        // Offer only what is not already back, so restoring twice cannot
-        // duplicate a chat that is already running.
-        // There is no "partial" state to report: a chat that comes back is
-        // pruned from the hold as it returns, so what remains is simply gone.
-        const missing = held.sessions.filter((s) => !liveIds.has(s.sessionId));
-        return {
-          root,
-          cwd: root,
-          sessions: missing,
-          lastSeen: held.closedAt ?? entry.lastSeen ?? null,
-          source: 'closed',
-        };
-      }
-      // Nothing to restore in a workspace whose chats are already running.
-      // Offering them spawned a second process for the same session id, so two
-      // processes wrote one transcript. Restore brings back what is gone.
-      return {
-        root,
-        cwd: root,
-        sessions: [],
-        lastSeen: entry.lastSeen ?? null,
-        source: 'current',
-      };
-    })
-    .filter((w) => w.sessions.length
-      && (w.source === 'current' || now - (w.lastSeen ?? 0) <= retainMs))
+    // Anything running here means you are working, not recovering.
+    .filter(([, entry]) => !entry.sessions?.length)
+    .map(([root, entry]) => ({
+      root,
+      cwd: root,
+      sessions: entry.lastLiveSet ?? [],
+      lastSeen: entry.darkSince ?? entry.lastSeen ?? null,
+      source: 'closed',
+    }))
+    .filter((w) => w.sessions.length && now - (w.lastSeen ?? 0) <= retainMs)
     .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));
 }
 
