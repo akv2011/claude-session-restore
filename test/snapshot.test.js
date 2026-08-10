@@ -340,3 +340,18 @@ test('a chat that comes back leaves the hold', () => {
   writeSnapshot([one, two]);
   assert.equal(offers(), undefined, 'everything back means nothing to restore');
 });
+
+test('reading the overview takes a fresh reading, so a closed chat shows at once', async () => {
+  // paths.js resolves HOME once at import, so this reuses the fixture home
+  // rather than pointing at a new one, which would silently do nothing.
+  const api = await import('../src/core/api.js');
+  fs.rmSync(path.join(fakeHome, '.claude-restore'), { recursive: true, force: true });
+  assert.equal(readSnapshot(), null, 'nothing stored to begin with');
+
+  api.getOverview();
+  assert.ok(readSnapshot(), 'the overview must record a reading itself');
+
+  fs.rmSync(path.join(fakeHome, '.claude-restore'), { recursive: true, force: true });
+  api.getOverview({ poll: false });
+  assert.equal(readSnapshot(), null, 'poll:false must leave the store untouched');
+});

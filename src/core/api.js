@@ -18,9 +18,26 @@ import {
   readPersistentSessions, setPersistentSessions,
 } from '../restore/vscode-settings.js';
 import * as launchd from '../recorder/launchd.js';
+import { pollOnce } from '../recorder/daemon.js';
 
-/** Everything the sidebar needs, in one call. */
-export function getOverview() {
+/**
+ * Everything the sidebar needs, in one call.
+ *
+ * Takes a reading first. Otherwise the newest a caller can see is the last
+ * recorder tick, so closing a chat and looking straight away showed nothing for
+ * up to 30 seconds and the window looked broken. A poll is cheap and
+ * idempotent: it reads a handful of small files and rewrites one.
+ *
+ * @param {{poll?:boolean}} [options] pass false to read the stored state as-is.
+ */
+export function getOverview(options = {}) {
+  if (options.poll !== false) {
+    try {
+      pollOnce();
+    } catch {
+      // A failed poll must not stop the window rendering what it already knows.
+    }
+  }
   const { projects, sessions, skipped } = scanSessions();
   const snapshot = readSnapshot();
   const restorable = restorableSessions(snapshot);
