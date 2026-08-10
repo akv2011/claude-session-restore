@@ -129,3 +129,16 @@ test('clearing removes only generated tasks', () => {
   const written = JSON.parse(fs.readFileSync(path.join(cwd, '.vscode', 'tasks.json'), 'utf8'));
   assert.deepEqual(written.tasks.map((t) => t.label), ['build']);
 });
+
+test('chats get their own terminal, not a split pane', () => {
+  // presentation.group means "use split terminals". Setting it crammed every
+  // restored chat into a narrow pane instead of giving each one a tab.
+  const [task] = buildTasks(sessions);
+  assert.equal(task.presentation.group, undefined, 'group must not be set by default');
+  assert.equal(task.presentation.panel, 'dedicated');
+});
+
+test('splitting is still available for anyone who wants it', () => {
+  const [task] = buildTasks(sessions, { splitTerminals: true });
+  assert.equal(task.presentation.group, 'claude');
+});

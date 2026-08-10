@@ -36,13 +36,19 @@ export function shellQuote(value) {
 }
 
 /**
- * @param {Array<{sessionId:string, name:string}>} sessions
- * @param {{staggerSeconds?:number, claudePath?:string}} [options]
+ * @param {Array<{sessionId:string, name:string, cwd?:string}>} sessions
+ * @param {{staggerSeconds?:number, claudePath?:string, workspaceRoot?:string,
+ *          splitTerminals?:boolean}} [options]
  */
 export function buildTasks(sessions, options = {}) {
   const stagger = options.staggerSeconds ?? DEFAULT_STAGGER_SECONDS;
   const claude = options.claudePath ?? 'claude';
   const root = options.workspaceRoot ?? null;
+  // presentation.group is documented as "executed in a specific terminal group
+  // using split panes... will use split terminals instead of a new terminal
+  // panel". Setting it squeezed every restored chat into a narrow split. Each
+  // chat wants a terminal of its own, which is a tab in the editor area.
+  const split = options.splitTerminals === true;
 
   return sessions.map((session, index) => {
     const delay = index * stagger;
@@ -58,7 +64,7 @@ export function buildTasks(sessions, options = {}) {
       runOptions: { runOn: 'folderOpen' },
       presentation: {
         panel: 'dedicated',
-        group: 'claude',
+        ...(split ? { group: 'claude' } : {}),
         reveal: 'always',
         focus: false,
         echo: false,
