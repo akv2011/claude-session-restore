@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import { readLiveSessions } from '../core/registry.js';
 import { writeSnapshot, readSnapshot } from '../core/snapshot.js';
 import { clearRestoreTasks } from '../restore/tasks.js';
-import { STATE_DIR, LOG_FILE } from '../core/paths.js';
+import { stateDir, logFile } from '../core/paths.js';
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_LOG_BYTES = 512 * 1024;
@@ -23,14 +23,14 @@ const MAX_LOG_BYTES = 512 * 1024;
 function log(message) {
   const line = `${new Date().toISOString()} ${message}\n`;
   try {
-    fs.mkdirSync(STATE_DIR, { recursive: true });
+    fs.mkdirSync(stateDir(), { recursive: true });
     // Cheap rotation so an always-on daemon cannot fill the disk.
     try {
-      if (fs.statSync(LOG_FILE).size > MAX_LOG_BYTES) {
-        fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
+      if (fs.statSync(logFile()).size > MAX_LOG_BYTES) {
+        fs.renameSync(logFile(), `${logFile()}.1`);
       }
     } catch { /* no log yet */ }
-    fs.appendFileSync(LOG_FILE, line);
+    fs.appendFileSync(logFile(), line);
   } catch { /* logging must never be fatal */ }
 }
 

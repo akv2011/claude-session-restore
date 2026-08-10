@@ -22,7 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  STATE_DIR, STATE_FILE, PROJECTS_DIR, isInsidePath, canBeWorkspaceRoot,
+  stateDir, stateFile, PROJECTS_DIR, isInsidePath, canBeWorkspaceRoot,
 } from './paths.js';
 import { readRunningSessionIds } from './registry.js';
 
@@ -30,7 +30,7 @@ const SCHEMA_VERSION = 3;
 
 export function readSnapshot() {
   try {
-    const raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    const raw = JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
     if (!Array.isArray(raw.sessions)) return null;
 
     // v1 kept a single global lastNonEmpty, which only helped when everything
@@ -86,12 +86,18 @@ export function writeSnapshot(sessions) {
     const vanished = (prior?.sessions ?? []).filter((s) => !liveIds.has(s.sessionId));
     const outstanding = (prior?.lastLiveSet ?? []).some((s) => !liveIds.has(s.sessionId));
 
-    // The offer is one snapshot: the live set from the poll before chats went
-    // away. It is taken on the poll where something vanishes, held while any of
-    // it is still missing, and replaced by the current set once it is all back.
+    // The offer is the live set from the poll before chats went away: taken on
+    // the poll where something vanishes, held while any of it is still missing,
+    // replaced by the current set once it is all back.
+    //
+    // A teardown is not atomic. A restart kills chats over more than one poll,
+    // and replacing the offer each time dropped whichever died first, so a
+    // machine that took two polls to go down came back offering the stragglers
+    // only. While chats are still missing the offer accumulates instead.
     let lastLiveSet;
-    if (vanished.length) lastLiveSet = prior?.sessions ?? live;
-    else if (outstanding) lastLiveSet = prior.lastLiveSet;
+    if (vanished.length) {
+      lastLiveSet = mergeByOpenOrder(outstanding ? prior.lastLiveSet : [], prior?.sessions ?? live);
+    } else if (outstanding) lastLiveSet = prior.lastLiveSet;
     else lastLiveSet = live;
 
     workspaces[root] = {
@@ -104,15 +110,30 @@ export function writeSnapshot(sessions) {
 
   for (const [root, entry] of Object.entries(workspaces)) {
     if (entry.sessions.length) continue;
-    if (now - (entry.lastSeen ?? 0) > RETAIN_MS) delete workspaces[root];
+    // A folder that has been deleted cannot be restored into: clicking it threw
+    // "that folder no longer exists". Test fixtures under /var/folders were
+    // sitting in the offer this way.
+    if (now - (entry.lastSeen ?? 0) > RETAIN_MS || !fs.existsSync(root)) delete workspaces[root];
   }
 
   const payload = { schemaVersion: SCHEMA_VERSION, capturedAt: now, sessions, workspaces };
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  const tmp = path.join(STATE_DIR, `.state.${process.pid}.tmp`);
+  const dir = stateDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, `.state.${process.pid}.tmp`);
   fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
-  fs.renameSync(tmp, STATE_FILE);
+  fs.renameSync(tmp, stateFile());
   return payload;
+}
+
+/**
+ * Two sets of chats as one, newest record of each id winning, back in the order
+ * they were opened. Used to grow an offer while a teardown is still in progress.
+ */
+function mergeByOpenOrder(...sets) {
+  const byId = new Map();
+  for (const set of sets) for (const session of set ?? []) byId.set(session.sessionId, session);
+  return [...byId.values()].sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0)
+    || String(a.name ?? '').localeCompare(String(b.name ?? '')));
 }
 
 /** How long a closed workspace stays offered for restore. */

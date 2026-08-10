@@ -24,10 +24,16 @@ export const SESSION_ENV_DIR = path.join(CLAUDE_DIR, 'session-env');
 export const IDE_DIR = path.join(CLAUDE_DIR, 'ide');
 export const HISTORY_FILE = path.join(CLAUDE_DIR, 'history.jsonl');
 
-/** Our own durable store. Claude never touches this. */
-export const STATE_DIR = path.join(HOME, '.claude-restore');
-export const STATE_FILE = path.join(STATE_DIR, 'state.json');
-export const LOG_FILE = path.join(STATE_DIR, 'recorder.log');
+/**
+ * Our own durable store. Claude never touches this.
+ *
+ * Resolved per call rather than captured at import. As constants these were
+ * fixed before a test could point HOME at a fixture, so the suite wrote its
+ * temporary workspaces into the real store and they showed up as offers.
+ */
+export const stateDir = () => path.join(os.homedir(), '.claude-restore');
+export const stateFile = () => path.join(stateDir(), 'state.json');
+export const logFile = () => path.join(stateDir(), 'recorder.log');
 
 /** Lossy on purpose. Use for lookup only, never to recover a path. */
 export function encodeCwd(cwd) {

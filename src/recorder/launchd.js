@@ -11,7 +11,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { STATE_DIR } from '../core/paths.js';
+import { stateDir } from '../core/paths.js';
 
 export const LABEL = 'dev.csr.claude-session-restore';
 
@@ -61,8 +61,8 @@ ${args}
 ${schedule}
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
-  <key>StandardOutPath</key><string>${path.join(STATE_DIR, 'launchd.out.log')}</string>
-  <key>StandardErrorPath</key><string>${path.join(STATE_DIR, 'launchd.err.log')}</string>
+  <key>StandardOutPath</key><string>${path.join(stateDir(), 'launchd.out.log')}</string>
+  <key>StandardErrorPath</key><string>${path.join(stateDir(), 'launchd.err.log')}</string>
 </dict>
 </plist>
 `;
@@ -70,7 +70,7 @@ ${schedule}
 
 export function install(options = {}) {
   fs.mkdirSync(AGENTS_DIR, { recursive: true });
-  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.mkdirSync(stateDir(), { recursive: true });
   fs.writeFileSync(PLIST_PATH, buildPlist(options), 'utf8');
 
   const uid = process.getuid();

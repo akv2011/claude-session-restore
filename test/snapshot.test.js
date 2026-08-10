@@ -16,6 +16,21 @@ import path from 'node:path';
 const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'csr-snap-'));
 process.env.HOME = fakeHome;
 
+/**
+ * A real folder to stand in for a project. Imaginary paths like W.ordered
+ * stopped working once a workspace that no longer exists became something the
+ * app refuses to offer, which is the correct behaviour: you cannot restore into
+ * a folder that is gone.
+ */
+const workspace = (name) => {
+  const dir = path.join(fakeHome, 'w', name);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+};
+const W = Object.fromEntries(
+  ['ordered', 'ghost', 'rule', 'keep', 'shutdown'].map((n) => [n, workspace(n)]),
+);
+
 const {
   writeSnapshot, readSnapshot, restorableSessions, restorableWorkspaces, groupByCwd,
 } = await import('../src/core/snapshot.js');
@@ -184,15 +199,15 @@ test('sessions with no timestamp fall back to name rather than arbitrary order',
 test('the offer and the generated tasks keep that order', async () => {
   const { buildTasks } = await import('../src/restore/tasks.js');
   const ordered = ['First', 'Second', 'Third'].map((name, i) => ({
-    sessionId: `ord${i}`, cwd: '/w/ordered', name, startedAt: (i + 1) * 1000,
+    sessionId: `ord${i}`, cwd: W.ordered, name, startedAt: (i + 1) * 1000,
   }));
   writeSnapshot(ordered);
   writeSnapshot([]);
 
-  const offered = restorableWorkspaces().find((w) => w.root === '/w/ordered');
+  const offered = restorableWorkspaces().find((w) => w.root === W.ordered);
   assert.deepEqual(offered.sessions.map((s) => s.name), ['First', 'Second', 'Third']);
 
-  const tasks = buildTasks(offered.sessions, { workspaceRoot: '/w/ordered' });
+  const tasks = buildTasks(offered.sessions, { workspaceRoot: W.ordered });
   assert.deepEqual(tasks.map((t) => t.label),
     ['claude: First', 'claude: Second', 'claude: Third']);
   // The stagger must follow the same order, so they appear in sequence.
@@ -206,8 +221,8 @@ test('a chat running with no registry file is still never offered', async () => 
   // ~/.claude/sessions/<pid>.json, so the app believed it was closed and offered
   // to restore it, which would have started a second copy.
   const chats = [
-    { sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', cwd: '/w/ghost', name: 'Ghost' },
-    { sessionId: 'bbbbbbbb-1111-2222-3333-444444444444', cwd: '/w/ghost', name: 'Really gone' },
+    { sessionId: 'aaaaaaaa-1111-2222-3333-444444444444', cwd: W.ghost, name: 'Ghost' },
+    { sessionId: 'bbbbbbbb-1111-2222-3333-444444444444', cwd: W.ghost, name: 'Really gone' },
   ];
   writeSnapshot(chats);
   writeSnapshot([]);   // the registry says both are gone
@@ -215,7 +230,7 @@ test('a chat running with no registry file is still never offered', async () => 
   // ...but a process scan proves the first one is running.
   const running = new Set(['aaaaaaaa-1111-2222-3333-444444444444']);
   const offered = restorableWorkspaces(readSnapshot(), undefined, running)
-    .find((w) => w.root === '/w/ghost');
+    .find((w) => w.root === W.ghost);
 
   assert.deepEqual(offered.sessions.map((s) => s.name), ['Really gone'],
     'a provably running chat must be excluded even when the registry omits it');
@@ -237,10 +252,10 @@ test('a running chat missing from the registry still shows as live', async () =>
 });
 
 test('THE RULE: anything not running is always offered', () => {
-  const chats = ['ME', 'A', 'B', 'C'].map((n) => ({ sessionId: n, cwd: '/w/rule', name: n }));
+  const chats = ['ME', 'A', 'B', 'C'].map((n) => ({ sessionId: n, cwd: W.rule, name: n }));
   const [me, ...rest] = chats;
   const offered = () => {
-    const w = restorableWorkspaces().find((x) => x.root === '/w/rule');
+    const w = restorableWorkspaces().find((x) => x.root === W.rule);
     return w ? w.sessions.map((x) => x.name).sort() : [];
   };
 
@@ -261,11 +276,11 @@ test('THE RULE: anything not running is always offered', () => {
 });
 
 test('an offer does not expire while it sits unused', () => {
-  const two = ['P', 'Q'].map((n) => ({ sessionId: n, cwd: '/w/keep', name: n }));
+  const two = ['P', 'Q'].map((n) => ({ sessionId: n, cwd: W.keep, name: n }));
   writeSnapshot(two);
   writeSnapshot([]);
   for (let i = 0; i < 20; i += 1) writeSnapshot([]);
-  const w = restorableWorkspaces().find((x) => x.root === '/w/keep');
+  const w = restorableWorkspaces().find((x) => x.root === W.keep);
   assert.deepEqual(w.sessions.map((s) => s.name).sort(), ['P', 'Q'], 'the choice stays the user\'s');
 });
 
@@ -281,4 +296,53 @@ test('a v1 snapshot is migrated rather than discarded', () => {
   const snap = readSnapshot();
   assert.ok(snap, 'a v1 file must not be thrown away');
   assert.equal(restorableSessions(snap).sessions.length, 9);
+});
+
+test('a shutdown that kills chats over several polls still offers all of them', () => {
+  // A shutdown is not atomic: chats die a few at a time. Replacing the offer on
+  // every poll meant whichever died first was dropped, so a machine that took
+  // two polls to go down came back offering only the stragglers.
+  const three = ['A', 'B', 'C'].map((name, i) => ({
+    sessionId: `shut${i}`, cwd: W.shutdown, name, startedAt: (i + 1) * 1000,
+  }));
+  writeSnapshot(three);
+  writeSnapshot(three.slice(1));   // A goes
+  writeSnapshot([]);               // B and C go on the next poll
+
+  const offered = restorableWorkspaces(readSnapshot(), undefined, new Set())
+    .find((w) => w.root === W.shutdown);
+  assert.deepEqual(offered.sessions.map((s) => s.name), ['A', 'B', 'C']);
+});
+
+test('a workspace that no longer exists is not offered', () => {
+  // Deleted folders and test fixtures were sitting in the offer for two days,
+  // and clicking one threw "that folder no longer exists".
+  const doomed = workspace('deleted-project');
+  writeSnapshot([{ sessionId: 'gone1', cwd: doomed, name: 'Ghost' }]);
+  fs.rmSync(doomed, { recursive: true, force: true });
+  writeSnapshot([]);
+  const roots = restorableWorkspaces(readSnapshot(), undefined, new Set()).map((w) => w.root);
+  assert.ok(!roots.includes(doomed), 'a missing folder cannot be restored into');
+});
+
+test('the store honours HOME, so a test never writes into the real one', async () => {
+  const { stateFile } = await import('../src/core/paths.js');
+  assert.ok(stateFile().startsWith(fakeHome), `store escaped the fixture: ${stateFile()}`);
+});
+
+test('a restart brings the offer back, because the store is all there is', () => {
+  // At boot the registry is empty: Claude deletes ~/.claude/sessions/<pid>.json
+  // when a session ends, so this file is the only record of what was open. The
+  // recorder then polls an empty machine every 30s, and none of those empty
+  // polls may erase the offer.
+  const root = workspace('reboot');
+  const three = ['One', 'Two', 'Three'].map((name, i) => ({
+    sessionId: `rb${i}`, cwd: root, name, startedAt: (i + 1) * 1000,
+  }));
+  writeSnapshot(three);
+  for (let i = 0; i < 10; i += 1) writeSnapshot([]);   // ten ticks of an empty machine
+
+  const offered = restorableWorkspaces(readSnapshot(), undefined, new Set())
+    .find((w) => w.root === root);
+  assert.deepEqual(offered.sessions.map((s) => s.name), ['One', 'Two', 'Three']);
 });
