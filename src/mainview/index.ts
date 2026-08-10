@@ -35,6 +35,13 @@ let selected: string | null = null;
 /** Dismissals are per scope: '*' for all chats, otherwise the project cwd. */
 const dismissed = new Set<string>();
 
+/** 'recent' is the default; the choice survives a restart. */
+type SortMode = 'recent' | 'name';
+// Validated rather than cast: a stale or hand-edited value must not leave the
+// list sorted by nothing.
+const storedSort = localStorage.getItem('csr.sort');
+let sortMode: SortMode = storedSort === 'name' ? 'name' : 'recent';
+
 /* ---------- formatting ---------- */
 
 const mb = (bytes: number) => {
@@ -212,6 +219,22 @@ function renderRestoreBanner() {
   $('dismiss-restore').onclick = () => { dismissed.add(selected ?? '*'); renderRestoreBanner(); };
 }
 
+/**
+ * Newest first by default. Alphabetical uses localeCompare with numeric
+ * collation so Chat_2 lands before Chat_10 rather than after it.
+ */
+function sortSessions(list: Session[]): Session[] {
+  const sorted = [...list];
+  if (sortMode === 'name') {
+    sorted.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, {
+      sensitivity: 'base', numeric: true,
+    }));
+  } else {
+    sorted.sort((a, b) => b.modifiedAt - a.modifiedAt);
+  }
+  return sorted;
+}
+
 function visibleSessions(): Session[] {
   // Selecting a folder includes its subfolders. Anything else would disagree
   // with restore, which opens one window for the whole tree.
@@ -224,7 +247,7 @@ function renderPanel() {
   $('panel-title').textContent = project ? shortPath(project.label) : 'All chats';
   ($('panel-title') as HTMLElement).title = project?.label ?? '';
 
-  const sessions = visibleSessions();
+  const sessions = sortSessions(visibleSessions());
   const bytes = sessions.reduce((sum, s) => sum + s.bytes + s.subagentBytes, 0);
   const live = sessions.filter((s) => s.live).length;
   $('panel-meta').textContent = `${sessions.length} chats · ${mb(bytes)}${live ? ` · ${live} running` : ''}`;
@@ -339,6 +362,23 @@ $('sheet-confirm').onclick = async () => {
   closeSheet();
   await refresh();
 };
+
+function renderSort() {
+  ($('sort-recent') as HTMLButtonElement).setAttribute('aria-pressed', String(sortMode === 'recent'));
+  ($('sort-name') as HTMLButtonElement).setAttribute('aria-pressed', String(sortMode === 'name'));
+}
+
+function setSort(mode: SortMode) {
+  if (sortMode === mode) return;
+  sortMode = mode;
+  localStorage.setItem('csr.sort', mode);
+  renderSort();
+  renderPanel();
+}
+
+$('sort-recent').onclick = () => setSort('recent');
+$('sort-name').onclick = () => setSort('name');
+renderSort();
 
 $('recorder-action').onclick = async () => {
   const response = await call('recorderInstall');

@@ -56,7 +56,14 @@ export function readFirstPrompt(file) {
     if (!text) continue;
     // Skip harness noise so the fallback shows something the user recognises.
     if (text.startsWith('<')) continue;
-    const clean = text.replace(/\s+/g, ' ').trim();
+    // A first prompt is often a paste, so strip the markdown that would
+    // otherwise show up as "## Context Usage **Model:** ..." in the list.
+    const clean = text
+      .replace(/^#{1,6}\s*/gm, '')
+      .replace(/\*\*|__|`+/g, '')
+      .replace(/^[-*+>\s]+/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!clean) continue;
     return clean.length > MAX_PROMPT_CHARS ? `${clean.slice(0, MAX_PROMPT_CHARS)}...` : clean;
   }

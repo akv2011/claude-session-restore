@@ -89,3 +89,18 @@ test('a corrupt or truncated transcript does not throw', () => {
 test('a missing file resolves to the id fallback instead of throwing', () => {
   assert.equal(resolveName('/nope/does-not-exist.jsonl', SID).source, 'id');
 });
+
+test('markdown in a pasted first prompt does not become the chat name', () => {
+  const file = writeTranscript([
+    userLine('## Context Usage **Model:** claude-opus-5 **Tokens:** 25.4k'),
+  ]);
+  const { name } = resolveName(file, SID);
+  assert.ok(!name.startsWith('#'), `heading markers survived: ${name}`);
+  assert.ok(!name.includes('**'), `emphasis survived: ${name}`);
+  assert.match(name, /^Context Usage/);
+});
+
+test('a bulleted first prompt loses its bullet', () => {
+  const file = writeTranscript([userLine('- fix the parser bug')]);
+  assert.equal(resolveName(file, SID).name, 'fix the parser bug');
+});
