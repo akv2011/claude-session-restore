@@ -44,18 +44,25 @@ export function readRegistry() {
 }
 
 /**
+ * Is this a terminal chat, as opposed to something else that registers itself
+ * identically? Three kinds share the registry and only one is restorable:
+ *
+ *   kind "interactive", entrypoint "cli"           a terminal a human used
+ *   kind "bg"                                      pre-warmed background worker
+ *   kind "interactive", entrypoint "claude-vscode" the VSCode extension panel
+ *
+ * The last two have no terminal to restore into, and `claude --resume` on them
+ * is meaningless, so counting either inflates the running total and would
+ * poison a restore. A missing entrypoint is treated as cli, because older
+ * versions did not record one and those sessions are real.
+ */
+export function isTerminalSession(entry) {
+  if (entry?.kind !== 'interactive') return false;
+  return entry.entrypoint === undefined || entry.entrypoint === null || entry.entrypoint === 'cli';
+}
+
+/**
  * Registry entries that are genuinely running, PID-recycle checked.
- *
- * Not everything in the registry is a chat. The Claude daemon pre-warms
- * background spare workers that register themselves too:
- *
- *   { "kind": "bg", "jobId": "397dd761", "name": "Widget_ui", "status": "idle" }
- *   -> claude bg-spare --bg-spare /tmp/cc-daemon-501/.../93d2b0d1.claim.sock
- *
- * One had been idle for 36 hours here. It has no transcript because it never
- * held a conversation, and `claude --resume` on it is meaningless, so counting
- * it as a chat both inflates the running count and would poison a restore.
- * Only `kind: "interactive"` is a terminal session a human was using.
  *
  * @param {{interactiveOnly?:boolean}} [options] pass false when you need every
  *   live session regardless of kind, e.g. to protect one from deletion.
@@ -69,7 +76,7 @@ export function readLiveSessions(options = {}) {
   for (const entry of raw) {
     const verdict = liveness.get(entry.pid);
     if (!verdict?.alive) continue;
-    if (interactiveOnly && entry.kind !== 'interactive') continue;
+    if (interactiveOnly && !isTerminalSession(entry)) continue;
     live.push({
       pid: entry.pid,
       sessionId: entry.sessionId ?? null,

@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { STATE_DIR, STATE_FILE, isInsidePath, canBeWorkspaceRoot } from './paths.js';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export function readSnapshot() {
   try {
@@ -39,6 +39,11 @@ export function readSnapshot() {
       }
       return { ...raw, schemaVersion: SCHEMA_VERSION, workspaces };
     }
+    // v2 had per-workspace memory but overwrote it on every poll, so opening a
+    // single chat after closing a window shrank the restore set to that one.
+    // Nothing to convert: the first v3 poll captures a restore point on the
+    // next alive -> empty transition.
+    if (raw.schemaVersion === 2) return { ...raw, schemaVersion: SCHEMA_VERSION };
     if (raw.schemaVersion !== SCHEMA_VERSION) return null;
     if (!raw.workspaces || typeof raw.workspaces !== 'object') return null;
     return raw;
@@ -58,25 +63,50 @@ export function writeSnapshot(sessions) {
   const previous = readSnapshot();
   const now = Date.now();
 
-  // Each workspace remembers its own last non-empty set. This covers both cases
-  // with one mechanism: a shutdown kills every workspace at once, and closing a
-  // single project kills only that one while the rest keep running.
+  const liveByRoot = new Map(groupByWorkspace(sessions).map((g) => [g.root, g.sessions]));
   const workspaces = { ...(previous?.workspaces ?? {}) };
-  for (const group of groupByWorkspace(sessions)) {
-    workspaces[group.root] = { lastSeen: now, sessions: group.sessions };
+  const roots = new Set([...Object.keys(workspaces), ...liveByRoot.keys()]);
+
+  for (const root of roots) {
+    const prior = workspaces[root];
+    const live = liveByRoot.get(root) ?? [];
+    const held = prior?.restorePoint ?? null;
+
+    if (live.length === 0) {
+      // Alive to empty: this is the moment worth remembering. Capture it once,
+      // and do not touch it again while the workspace stays empty.
+      if (prior && !held && prior.sessions?.length) {
+        // sessions must be emptied here too. Leaving the old list behind made
+        // every held chat look like it was already running, so a freshly closed
+        // window offered nothing at all.
+        workspaces[root] = {
+          ...prior,
+          sessions: [],
+          restorePoint: { sessions: prior.sessions, closedAt: now },
+        };
+      }
+      continue;
+    }
+
+    // A held restore point is released only once every chat in it is running
+    // again. Without this the live set overwrites it, so opening one chat by
+    // hand after closing a window silently discards the rest.
+    const liveIds = new Set(live.map((session) => session.sessionId));
+    const satisfied = !held || held.sessions.every((session) => liveIds.has(session.sessionId));
+
+    workspaces[root] = {
+      lastSeen: now,
+      sessions: live,
+      ...(satisfied ? {} : { restorePoint: held }),
+    };
   }
 
-  // Forget a workspace once it is well past the point of wanting it back.
   for (const [root, entry] of Object.entries(workspaces)) {
-    if (now - (entry.lastSeen ?? 0) > RETAIN_MS) delete workspaces[root];
+    const when = entry.restorePoint?.closedAt ?? entry.lastSeen ?? 0;
+    if (now - when > RETAIN_MS) delete workspaces[root];
   }
 
-  const payload = {
-    schemaVersion: SCHEMA_VERSION,
-    capturedAt: now,
-    sessions,
-    workspaces,
-  };
+  const payload = { schemaVersion: SCHEMA_VERSION, capturedAt: now, sessions, workspaces };
   fs.mkdirSync(STATE_DIR, { recursive: true });
   const tmp = path.join(STATE_DIR, `.state.${process.pid}.tmp`);
   fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
@@ -100,16 +130,32 @@ const RETAIN_MS = 48 * 60 * 60 * 1000;
 export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAIN_MS) {
   if (!snapshot) return [];
   const now = snapshot.capturedAt ?? Date.now();
-  const liveRoots = new Set(groupByWorkspace(snapshot.sessions).map((g) => g.root));
 
   return Object.entries(snapshot.workspaces ?? {})
-    .map(([root, entry]) => ({
-      root,
-      cwd: root,
-      sessions: entry.sessions ?? [],
-      lastSeen: entry.lastSeen ?? null,
-      source: liveRoots.has(root) ? 'current' : 'closed',
-    }))
+    .map(([root, entry]) => {
+      const held = entry.restorePoint;
+      const liveIds = new Set((entry.sessions ?? []).map((s) => s.sessionId));
+
+      if (held) {
+        // Offer only what is not already back, so restoring twice cannot
+        // duplicate a chat that is already running.
+        const missing = held.sessions.filter((s) => !liveIds.has(s.sessionId));
+        return {
+          root,
+          cwd: root,
+          sessions: missing,
+          lastSeen: held.closedAt ?? entry.lastSeen ?? null,
+          source: missing.length === held.sessions.length ? 'closed' : 'partial',
+        };
+      }
+      return {
+        root,
+        cwd: root,
+        sessions: entry.sessions ?? [],
+        lastSeen: entry.lastSeen ?? null,
+        source: 'current',
+      };
+    })
     .filter((w) => w.sessions.length
       && (w.source === 'current' || now - (w.lastSeen ?? 0) <= retainMs))
     .sort((a, b) => (b.lastSeen ?? 0) - (a.lastSeen ?? 0));

@@ -30,7 +30,7 @@ test('a snapshot round-trips', () => {
   writeSnapshot(nine);
   const snap = readSnapshot();
   assert.equal(snap.sessions.length, 9);
-  assert.equal(snap.schemaVersion, 2);
+  assert.equal(snap.schemaVersion, 3);
   assert.ok(snap.workspaces, 'memory is kept per workspace');
 });
 
@@ -83,15 +83,22 @@ test('closing ONE project keeps its chats while others keep running', () => {
   assert.equal(live.source, 'current');
 });
 
-test('a reopened workspace goes back to current with its new chats', () => {
+test('a different chat does not count as restoring the one you closed', () => {
   writeSnapshot([{ sessionId: 'x', cwd: '/w/p', name: 'Old' }]);
   writeSnapshot([]);
-  assert.equal(restorableWorkspaces()[0].source, 'closed');
+  const closed = restorableWorkspaces().find((w) => w.root === '/w/p');
+  assert.equal(closed.source, 'closed');
 
+  // Starting some other chat in the same folder is not the chat you lost, so
+  // the hold stays and Old is still on offer.
   writeSnapshot([{ sessionId: 'y', cwd: '/w/p', name: 'New' }]);
-  const [w] = restorableWorkspaces();
-  assert.equal(w.source, 'current');
-  assert.equal(w.sessions[0].name, 'New', 'stale chats must not linger');
+  const held = restorableWorkspaces().find((w) => w.root === '/w/p');
+  assert.equal(held.source, 'closed');
+  assert.deepEqual(held.sessions.map((s) => s.name), ['Old']);
+
+  // Bringing the real one back releases it.
+  writeSnapshot([{ sessionId: 'x', cwd: '/w/p', name: 'Old' }]);
+  assert.equal(restorableWorkspaces().find((w) => w.root === '/w/p').source, 'current');
 });
 
 test('a v1 snapshot is migrated rather than discarded', () => {
@@ -105,7 +112,7 @@ test('a v1 snapshot is migrated rather than discarded', () => {
   }));
   const snap = readSnapshot();
   assert.ok(snap, 'a v1 file must not be thrown away');
-  assert.equal(snap.schemaVersion, 2);
+  assert.equal(snap.schemaVersion, 3);
   assert.equal(restorableSessions(snap).sessions.length, 9);
 });
 
@@ -191,4 +198,69 @@ test('a chat run in the home directory does not swallow every project', async ()
   // Home contains everything, so without a guard one stray chat would collapse
   // the whole machine into a single restore window.
   assert.equal(groups.length, 3, 'home must not act as a workspace root');
+});
+
+test('the restore point survives opening chats by hand', () => {
+  // The rule: what was tracked while alive is the candidate, and it is not
+  // overwritten until those chats are actually running again. Without it,
+  // opening one chat after closing a window discarded the rest.
+  const eight = Array.from({ length: 8 }, (_, i) => ({
+    sessionId: `h${i}`, cwd: '/w/hold', name: `Chat_${i}`,
+  }));
+  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/hold');
+
+  writeSnapshot(eight);
+  assert.equal(offers().source, 'current');
+
+  writeSnapshot([]);
+  assert.equal(offers().sessions.length, 8, 'a freshly closed window must offer everything');
+  assert.equal(offers().source, 'closed');
+
+  writeSnapshot([eight[0]]);
+  assert.equal(offers().sessions.length, 7, 'opening one by hand must not discard the other seven');
+  assert.equal(offers().source, 'partial');
+
+  writeSnapshot(eight.slice(0, 5));
+  assert.equal(offers().sessions.length, 3, 'only what is still missing is offered');
+
+  writeSnapshot(eight);
+  assert.equal(offers().source, 'current', 'fully restored releases the hold');
+  assert.equal(offers().sessions.length, 8);
+});
+
+test('after the hold is released, normal tracking resumes', () => {
+  const three = Array.from({ length: 3 }, (_, i) => ({
+    sessionId: `r${i}`, cwd: '/w/resume', name: `C${i}`,
+  }));
+  const offers = () => restorableWorkspaces().find((w) => w.root === '/w/resume');
+
+  writeSnapshot(three);
+  writeSnapshot([]);
+  writeSnapshot(three);                 // fully restored, hold released
+  writeSnapshot(three.slice(0, 2));     // you close one deliberately
+  assert.equal(offers().source, 'current');
+  assert.equal(offers().sessions.length, 2, 'a deliberately closed chat must not be re-offered');
+});
+
+test('a restored chat is never offered twice', () => {
+  const two = [
+    { sessionId: 'd1', cwd: '/w/dupe', name: 'A' },
+    { sessionId: 'd2', cwd: '/w/dupe', name: 'B' },
+  ];
+  writeSnapshot(two);
+  writeSnapshot([]);
+  writeSnapshot([two[0]]);
+  const offered = restorableWorkspaces().find((w) => w.root === '/w/dupe').sessions;
+  assert.deepEqual(offered.map((s) => s.sessionId), ['d2'], 'the running chat must not be re-offered');
+});
+
+test('the VSCode extension panel is not a terminal chat', async () => {
+  const { isTerminalSession } = await import('../src/core/registry.js');
+  // Same kind as a real terminal chat, different entrypoint. Restoring it would
+  // run claude --resume in a terminal for a chat that lives in the sidebar.
+  assert.equal(isTerminalSession({ kind: 'interactive', entrypoint: 'claude-vscode' }), false);
+  assert.equal(isTerminalSession({ kind: 'interactive', entrypoint: 'cli' }), true);
+  assert.equal(isTerminalSession({ kind: 'bg', entrypoint: 'cli' }), false);
+  // Older versions did not record an entrypoint; those must not be dropped.
+  assert.equal(isTerminalSession({ kind: 'interactive' }), true);
 });
