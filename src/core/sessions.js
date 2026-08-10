@@ -13,7 +13,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { PROJECTS_DIR, isSessionId, encodeCwd } from './paths.js';
+import { PROJECTS_DIR, isSessionId, encodeCwd, isInsidePath, canBeWorkspaceRoot } from './paths.js';
 import { readHead, parseLines } from './jsonl.js';
 import { resolveName } from './names.js';
 import { readLiveSessions } from './registry.js';
@@ -184,10 +184,44 @@ export function scanSessions(options = {}) {
     if (session.live) project.liveCount += 1;
   }
 
-  const projects = [...byProject.values()].sort((a, b) => {
-    if (b.liveCount !== a.liveCount) return b.liveCount - a.liveCount;
-    return b.sessions[0].modifiedAt - a.sessions[0].modifiedAt;
-  });
+  const projects = [...byProject.values()];
 
-  return { projects, sessions, skipped };
+  // Chats in a subfolder belong to the folder you open, so a parent must account
+  // for its descendants. Without this the sidebar disagreed with restore: chats
+  // under Projects/listings were missing from Projects, yet restore put them in
+  // the Projects window.
+  for (const project of projects) {
+    const ancestors = projects
+      .filter((other) => other !== project && other.cwd && project.cwd
+        && canBeWorkspaceRoot(other.cwd) && isInsidePath(project.cwd, other.cwd))
+      .sort((a, b) => b.cwd.length - a.cwd.length);
+    project.parent = ancestors[0]?.cwd ?? null;
+    project.depth = ancestors.length;
+  }
+
+  for (const project of projects) {
+    const descendants = canBeWorkspaceRoot(project.cwd)
+      ? projects.filter((other) => other !== project
+        && other.cwd && isInsidePath(other.cwd, project.cwd))
+      : [];
+    project.allSessions = [project, ...descendants].flatMap((p) => p.sessions);
+    project.allBytes = project.allSessions
+      .reduce((sum, session) => sum + session.bytes + session.subagentBytes, 0);
+    project.allLiveCount = project.allSessions.filter((session) => session.live).length;
+  }
+
+  // Sorted as a tree: roots by activity, each child directly under its parent.
+  const rank = (p) => [-p.allLiveCount, -p.allSessions[0].modifiedAt];
+  const roots = projects.filter((p) => !p.parent)
+    .sort((a, b) => rank(a)[0] - rank(b)[0] || rank(a)[1] - rank(b)[1]);
+  const ordered = [];
+  const place = (project) => {
+    ordered.push(project);
+    projects.filter((child) => child.parent === project.cwd)
+      .sort((a, b) => rank(a)[0] - rank(b)[0] || rank(a)[1] - rank(b)[1])
+      .forEach(place);
+  };
+  roots.forEach(place);
+
+  return { projects: ordered, sessions, skipped };
 }

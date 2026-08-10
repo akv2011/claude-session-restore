@@ -128,3 +128,16 @@ test('sessions without a cwd are dropped rather than grouped under undefined', a
   assert.equal(groups.length, 1);
   assert.equal(groups[0].sessions.length, 1);
 });
+
+test('a chat run in the home directory does not swallow every project', async () => {
+  const { groupByWorkspace } = await import('../src/core/snapshot.js');
+  const home = process.env.HOME;
+  const groups = groupByWorkspace([
+    { sessionId: 'a', cwd: home, name: 'Loose' },
+    { sessionId: 'b', cwd: `${home}/Projects`, name: 'Real' },
+    { sessionId: 'c', cwd: `${home}/Other`, name: 'Also real' },
+  ]);
+  // Home contains everything, so without a guard one stray chat would collapse
+  // the whole machine into a single restore window.
+  assert.equal(groups.length, 3, 'home must not act as a workspace root');
+});

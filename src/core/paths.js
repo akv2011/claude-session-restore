@@ -62,3 +62,25 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export function isSessionId(value) {
   return typeof value === 'string' && UUID_RE.test(value);
 }
+
+/**
+ * True when `child` is `parent` or sits inside it, compared on a path boundary
+ * so /a/project does not swallow /a/project-two.
+ */
+export function isInsidePath(child, parent) {
+  return child === parent || child.startsWith(`${parent}/`);
+}
+
+/**
+ * Can this folder stand as a workspace that other chats fold into?
+ *
+ * The home directory and the filesystem root technically contain every other
+ * path, so a single chat started in ~ would otherwise swallow every project in
+ * the sidebar and make restore open one window holding everything. A chat run
+ * directly in ~ is its own thing, not a parent.
+ */
+export function canBeWorkspaceRoot(cwd) {
+  if (!cwd) return false;
+  const normalised = cwd.replace(/\/+$/, '');
+  return normalised !== '' && normalised !== HOME && normalised !== '/';
+}

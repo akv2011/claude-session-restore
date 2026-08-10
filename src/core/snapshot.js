@@ -12,7 +12,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { STATE_DIR, STATE_FILE } from './paths.js';
+import { STATE_DIR, STATE_FILE, isInsidePath, canBeWorkspaceRoot } from './paths.js';
 
 const SCHEMA_VERSION = 1;
 
@@ -100,11 +100,6 @@ export function groupByCwd(sessions) {
   return [...byCwd.entries()].map(([cwd, group]) => ({ cwd, sessions: group }));
 }
 
-/** True when `child` is `parent` or sits inside it, on a path boundary. */
-function isInside(child, parent) {
-  return child === parent || child.startsWith(`${parent}/`);
-}
-
 /**
  * Group sessions by the folder you would actually open in VSCode.
  *
@@ -122,7 +117,9 @@ export function groupByWorkspace(sessions) {
 
   const rootFor = new Map();
   for (const cwd of roots) {
-    rootFor.set(cwd, roots.find((candidate) => isInside(cwd, candidate)) ?? cwd);
+    rootFor.set(cwd, roots.find(
+      (candidate) => canBeWorkspaceRoot(candidate) && isInsidePath(cwd, candidate),
+    ) ?? cwd);
   }
 
   const grouped = new Map();

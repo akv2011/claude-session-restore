@@ -35,8 +35,15 @@ function cmdList(args) {
 
   for (const project of overview.projects) {
     if (filter && !project.label.toLowerCase().includes(filter.toLowerCase())) continue;
-    const live = project.liveCount ? `${GREEN}${project.liveCount} live${RESET}  ` : '';
-    console.log(`\n${BOLD}${project.label}${RESET}  ${DIM}${project.sessionCount} chats, ${mb(project.bytes)}${RESET}  ${live}`);
+    const live = project.allLiveCount ? `${GREEN}${project.allLiveCount} live${RESET}  ` : '';
+    const indent = '  '.repeat(project.depth);
+    const label = project.depth > 0 ? project.label.split('/').pop() : project.label;
+    // Children are printed as their own rows, so say plainly when the inclusive
+    // count differs from what is listed directly beneath this heading.
+    const scope = project.allSessions.length === project.sessionCount
+      ? `${project.sessionCount} chats`
+      : `${project.sessionCount} here, ${project.allSessions.length} with subfolders`;
+    console.log(`\n${indent}${BOLD}${label}${RESET}  ${DIM}${scope}, ${mb(project.allBytes)}${RESET}  ${live}`);
     for (const session of project.sessions) {
       const mark = session.live ? `${GREEN}*${RESET}` : ' ';
       const size = session.transcriptMissing ? `${DIM}no transcript${RESET}` : mb(session.bytes + session.subagentBytes).padStart(9);

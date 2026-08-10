@@ -31,6 +31,12 @@ export function getOverview() {
       liveCount: project.liveCount,
       sessionCount: project.sessions.length,
       sessions: project.sessions,
+      // Inclusive of subfolders, which is the unit a VSCode window restores.
+      depth: project.depth,
+      parent: project.parent,
+      allSessions: project.allSessions,
+      allBytes: project.allBytes,
+      allLiveCount: project.allLiveCount,
     })),
     totals: {
       projects: projects.length,

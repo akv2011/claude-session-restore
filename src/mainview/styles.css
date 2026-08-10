@@ -611,3 +611,13 @@ body {
 }
 .warn-body { flex: 1; min-width: 0; }
 .warn strong { color: var(--danger); font-weight: 600; }
+
+/* Subfolder rows sit under their parent and read one step quieter. */
+.proj-nested .proj-name { color: var(--ink-dim); }
+.proj-nested::after {
+  content: "";
+  position: absolute;
+  left: 8px; top: 0; bottom: 0;
+  width: 1px;
+  background: var(--hairline);
+}

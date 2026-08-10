@@ -26,6 +26,8 @@ type Session = {
 type Project = {
   label: string; cwd: string | null; projectDir: string;
   bytes: number; liveCount: number; sessionCount: number; sessions: Session[];
+  depth: number; parent: string | null;
+  allSessions: Session[]; allBytes: number; allLiveCount: number;
 };
 
 let state: { projects: Project[]; totals: any; restore: any; recorder: any } | null = null;
@@ -113,10 +115,17 @@ function renderRail() {
     button.className = 'proj';
     button.setAttribute('aria-current', String(selected === project.label));
     button.title = project.label;
-    const live = project.liveCount
-      ? `<span class="live-pip">${project.liveCount}</span>` : '';
-    button.innerHTML = `<span class="proj-name">${projectLabel(project.label)}</span>
-      <span class="proj-sub"><span>${project.sessionCount}</span><span>${mb(project.bytes)}</span>${live}</span>`;
+    // Counts are inclusive of subfolders so the rail agrees with what a restore
+    // would actually put in one window.
+    const live = project.allLiveCount
+      ? `<span class="live-pip">${project.allLiveCount}</span>` : '';
+    const nested = project.depth > 0;
+    button.style.paddingLeft = `${8 + project.depth * 14}px`;
+    if (nested) button.classList.add('proj-nested');
+    button.innerHTML = `<span class="proj-name">${
+      nested ? escapeHtml(project.label.split('/').pop() ?? project.label) : projectLabel(project.label)
+    }</span>
+      <span class="proj-sub"><span>${project.allSessions.length}</span><span>${mb(project.allBytes)}</span>${live}</span>`;
     button.onclick = () => { selected = project.label; renderRail(); renderRestoreBanner(); renderPanel(); };
     list.appendChild(button);
   }
@@ -204,8 +213,10 @@ function renderRestoreBanner() {
 }
 
 function visibleSessions(): Session[] {
+  // Selecting a folder includes its subfolders. Anything else would disagree
+  // with restore, which opens one window for the whole tree.
   if (selected === null) return state!.projects.flatMap((p) => p.sessions);
-  return state!.projects.find((p) => p.label === selected)?.sessions ?? [];
+  return state!.projects.find((p) => p.label === selected)?.allSessions ?? [];
 }
 
 function renderPanel() {
