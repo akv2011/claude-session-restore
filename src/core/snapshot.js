@@ -32,9 +32,16 @@ export function readSnapshot() {
     if (raw.schemaVersion === 1) {
       const workspaces = {};
       for (const group of groupByWorkspace(raw.lastNonEmpty?.sessions ?? [])) {
+        // These chats were remembered precisely because they had gone, so they
+        // are a restore point. Recording them as live would make restore think
+        // there is nothing to bring back.
         workspaces[group.root] = {
           lastSeen: raw.lastNonEmpty?.capturedAt ?? raw.capturedAt,
-          sessions: group.sessions,
+          sessions: [],
+          restorePoint: {
+            sessions: group.sessions,
+            closedAt: raw.lastNonEmpty?.capturedAt ?? raw.capturedAt,
+          },
         };
       }
       return { ...raw, schemaVersion: SCHEMA_VERSION, workspaces };
@@ -148,10 +155,13 @@ export function restorableWorkspaces(snapshot = readSnapshot(), retainMs = RETAI
           source: missing.length === held.sessions.length ? 'closed' : 'partial',
         };
       }
+      // Nothing to restore in a workspace whose chats are already running.
+      // Offering them spawned a second process for the same session id, so two
+      // processes wrote one transcript. Restore brings back what is gone.
       return {
         root,
         cwd: root,
-        sessions: entry.sessions ?? [],
+        sessions: [],
         lastSeen: entry.lastSeen ?? null,
         source: 'current',
       };

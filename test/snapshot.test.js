@@ -34,11 +34,11 @@ test('a snapshot round-trips', () => {
   assert.ok(snap.workspaces, 'memory is kept per workspace');
 });
 
-test('the live set is what restore offers while everything is running', () => {
+test('nothing is offered while every chat is still running', () => {
   writeSnapshot(nine);
   const { sessions, source } = restorableSessions();
-  assert.equal(sessions.length, 9);
-  assert.equal(source, 'current');
+  assert.equal(sessions.length, 0, 'restore brings back what is gone, not what is running');
+  assert.equal(source, 'none');
 });
 
 test('a final empty poll at shutdown does NOT lose the restore set', () => {
@@ -79,8 +79,8 @@ test('closing ONE project keeps its chats while others keep running', () => {
   assert.equal(closed.sessions.length, 2);
   assert.equal(closed.source, 'closed');
 
-  const live = workspaces.find((w) => w.root === '/w/other');
-  assert.equal(live.source, 'current');
+  // The still-running project is not offered: there is nothing to bring back.
+  assert.equal(workspaces.find((w) => w.root === '/w/other'), undefined);
 });
 
 test('a different chat does not count as restoring the one you closed', () => {
@@ -96,9 +96,9 @@ test('a different chat does not count as restoring the one you closed', () => {
   assert.equal(held.source, 'closed');
   assert.deepEqual(held.sessions.map((s) => s.name), ['Old']);
 
-  // Bringing the real one back releases it.
+  // Bringing the real one back releases the hold, so nothing remains on offer.
   writeSnapshot([{ sessionId: 'x', cwd: '/w/p', name: 'Old' }]);
-  assert.equal(restorableWorkspaces().find((w) => w.root === '/w/p').source, 'current');
+  assert.equal(restorableWorkspaces().find((w) => w.root === '/w/p'), undefined);
 });
 
 test('a v1 snapshot is migrated rather than discarded', () => {
@@ -210,7 +210,7 @@ test('the restore point survives opening chats by hand', () => {
   const offers = () => restorableWorkspaces().find((w) => w.root === '/w/hold');
 
   writeSnapshot(eight);
-  assert.equal(offers().source, 'current');
+  assert.equal(offers(), undefined, 'nothing to restore while they all run');
 
   writeSnapshot([]);
   assert.equal(offers().sessions.length, 8, 'a freshly closed window must offer everything');
@@ -224,8 +224,7 @@ test('the restore point survives opening chats by hand', () => {
   assert.equal(offers().sessions.length, 3, 'only what is still missing is offered');
 
   writeSnapshot(eight);
-  assert.equal(offers().source, 'current', 'fully restored releases the hold');
-  assert.equal(offers().sessions.length, 8);
+  assert.equal(offers(), undefined, 'fully restored means nothing left to restore');
 });
 
 test('after the hold is released, normal tracking resumes', () => {
@@ -238,8 +237,7 @@ test('after the hold is released, normal tracking resumes', () => {
   writeSnapshot([]);
   writeSnapshot(three);                 // fully restored, hold released
   writeSnapshot(three.slice(0, 2));     // you close one deliberately
-  assert.equal(offers().source, 'current');
-  assert.equal(offers().sessions.length, 2, 'a deliberately closed chat must not be re-offered');
+  assert.equal(offers(), undefined, 'a deliberately closed chat must not be re-offered');
 });
 
 test('a restored chat is never offered twice', () => {
@@ -263,4 +261,31 @@ test('the VSCode extension panel is not a terminal chat', async () => {
   assert.equal(isTerminalSession({ kind: 'bg', entrypoint: 'cli' }), false);
   // Older versions did not record an entrypoint; those must not be dropped.
   assert.equal(isTerminalSession({ kind: 'interactive' }), true);
+});
+
+test('a chat that is already running is never offered for restore', () => {
+  // Offering live chats meant clicking restore launched a second process for
+  // the same session id, and two processes then wrote one transcript.
+  const live = [
+    { sessionId: 'live1', cwd: '/w/dup', name: 'A' },
+    { sessionId: 'live2', cwd: '/w/dup', name: 'B' },
+  ];
+  writeSnapshot(live);
+  const offered = restorableWorkspaces().find((w) => w.root === '/w/dup');
+  assert.equal(offered, undefined, 'a fully running workspace has nothing to restore');
+  // Scoped to this workspace: earlier tests leave other workspaces behind.
+  const mine = restorableSessions().sessions.filter((s) => s.cwd === '/w/dup');
+  assert.equal(mine.length, 0);
+});
+
+test('only the chats that are gone are offered after a partial restore', () => {
+  const two = [
+    { sessionId: 'p1', cwd: '/w/part', name: 'A' },
+    { sessionId: 'p2', cwd: '/w/part', name: 'B' },
+  ];
+  writeSnapshot(two);
+  writeSnapshot([]);
+  writeSnapshot([two[0]]);      // A is back, B is not
+  const offered = restorableWorkspaces().find((w) => w.root === '/w/part');
+  assert.deepEqual(offered.sessions.map((s) => s.sessionId), ['p2']);
 });
