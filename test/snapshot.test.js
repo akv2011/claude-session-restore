@@ -372,3 +372,34 @@ test('a chat whose transcript is gone is never offered, since resume cannot brin
   // later test in this file would be offered.
   fs.rmSync(path.join(fakeHome, '.claude'), { recursive: true, force: true });
 });
+
+test('bringing part of an offer back retires the rest of it', () => {
+  // The close is resolved the moment you act on it. Retiring the offer only
+  // when every chat came back meant the ones you deliberately left behind kept
+  // being offered, so two live chats sat under a banner asking about three.
+  const root = workspace('acted');
+  const four = ['A', 'B', 'C', 'D'].map((name, i) => ({
+    sessionId: `act${i}`, cwd: root, name, startedAt: i,
+  }));
+  writeSnapshot(four);
+  writeSnapshot([]);                       // all four go, all four on offer
+  writeSnapshot([four[0]]);                // you bring one back, and only one
+
+  const offered = restorableWorkspaces(readSnapshot(), undefined, new Set())
+    .find((w) => w.root === root);
+  assert.equal(offered, undefined, 'the other three must stop being offered');
+});
+
+test('starting unrelated work does not throw away a pending offer', () => {
+  // The restart case: chats are waiting to be restored and you open something
+  // new in that folder first. Nothing was acted on, so the offer must survive.
+  const root = workspace('untouched');
+  const two = ['P', 'Q'].map((name, i) => ({ sessionId: `un${i}`, cwd: root, name, startedAt: i }));
+  writeSnapshot(two);
+  writeSnapshot([]);
+  writeSnapshot([{ sessionId: 'brand-new', cwd: root, name: 'New', startedAt: 9 }]);
+
+  const offered = restorableWorkspaces(readSnapshot(), undefined, new Set())
+    .find((w) => w.root === root);
+  assert.deepEqual((offered?.sessions ?? []).map((s) => s.name), ['P', 'Q']);
+});

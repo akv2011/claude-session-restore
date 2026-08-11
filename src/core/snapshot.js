@@ -94,10 +94,20 @@ export function writeSnapshot(sessions) {
     // and replacing the offer each time dropped whichever died first, so a
     // machine that took two polls to go down came back offering the stragglers
     // only. While chats are still missing the offer accumulates instead.
+    // An offer belongs to one close, and it is resolved the moment you act on
+    // it. Bringing any of those chats back is that signal: the ones you chose to
+    // leave are a decision, not a pending restore. Holding until every chat was
+    // back left two live chats sitting under a banner asking about three.
+    //
+    // Starting something unrelated is not acting on it, so a chat you open in
+    // that folder before clicking Restore must not throw the offer away.
+    const acted = (prior?.lastLiveSet ?? []).some((s) => liveIds.has(s.sessionId));
+
     let lastLiveSet;
     if (vanished.length) {
       lastLiveSet = mergeByOpenOrder(outstanding ? prior.lastLiveSet : [], prior?.sessions ?? live);
-    } else if (outstanding) lastLiveSet = prior.lastLiveSet;
+    } else if (live.length && (acted || !outstanding)) lastLiveSet = live;
+    else if (outstanding) lastLiveSet = prior.lastLiveSet;
     else lastLiveSet = live;
 
     workspaces[root] = {
