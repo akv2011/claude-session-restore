@@ -94,19 +94,19 @@ export function writeSnapshot(sessions) {
     // and replacing the offer each time dropped whichever died first, so a
     // machine that took two polls to go down came back offering the stragglers
     // only. While chats are still missing the offer accumulates instead.
-    // An offer belongs to one close, and it is resolved the moment you act on
-    // it. Bringing any of those chats back is that signal: the ones you chose to
-    // leave are a decision, not a pending restore. Holding until every chat was
-    // back left two live chats sitting under a banner asking about three.
+    // Working in a folder again answers the question restore was asking. Whatever
+    // is live becomes the baseline on the very next poll, so an offer never
+    // outlives the session it belonged to.
     //
-    // Starting something unrelated is not acting on it, so a chat you open in
-    // that folder before clicking Restore must not throw the offer away.
-    const acted = (prior?.lastLiveSet ?? []).some((s) => liveIds.has(s.sessionId));
-
+    // The deliberate cost: chats waiting to be restored are dropped if you start
+    // something new in that folder first. Restore before you start, or Dismiss.
+    //
+    // The vanished branch wins, because a teardown also passes through polls
+    // where something is still live and must accumulate rather than reset.
     let lastLiveSet;
     if (vanished.length) {
       lastLiveSet = mergeByOpenOrder(outstanding ? prior.lastLiveSet : [], prior?.sessions ?? live);
-    } else if (live.length && (acted || !outstanding)) lastLiveSet = live;
+    } else if (live.length) lastLiveSet = live;
     else if (outstanding) lastLiveSet = prior.lastLiveSet;
     else lastLiveSet = live;
 

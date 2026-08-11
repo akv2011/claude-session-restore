@@ -390,9 +390,10 @@ test('bringing part of an offer back retires the rest of it', () => {
   assert.equal(offered, undefined, 'the other three must stop being offered');
 });
 
-test('starting unrelated work does not throw away a pending offer', () => {
-  // The restart case: chats are waiting to be restored and you open something
-  // new in that folder first. Nothing was acted on, so the offer must survive.
+test('working in a folder again clears its offer on the next poll', () => {
+  // Chosen deliberately: the offer is what was live at the last poll, so once
+  // you are working in that folder again the question is answered. The cost is
+  // that a pending offer is dropped if you start new work before restoring.
   const root = workspace('untouched');
   const two = ['P', 'Q'].map((name, i) => ({ sessionId: `un${i}`, cwd: root, name, startedAt: i }));
   writeSnapshot(two);
@@ -401,5 +402,11 @@ test('starting unrelated work does not throw away a pending offer', () => {
 
   const offered = restorableWorkspaces(readSnapshot(), undefined, new Set())
     .find((w) => w.root === root);
-  assert.deepEqual((offered?.sessions ?? []).map((s) => s.name), ['P', 'Q']);
+  assert.equal(offered, undefined, 'a live folder has nothing to restore');
+
+  // ...and closing that new chat offers it, not the chats from before.
+  writeSnapshot([]);
+  const next = restorableWorkspaces(readSnapshot(), undefined, new Set())
+    .find((w) => w.root === root);
+  assert.deepEqual(next.sessions.map((s) => s.name), ['New']);
 });
