@@ -346,3 +346,29 @@ test('a restart brings the offer back, because the store is all there is', () =>
     .find((w) => w.root === root);
   assert.deepEqual(offered.sessions.map((s) => s.name), ['One', 'Two', 'Three']);
 });
+
+test('a chat whose transcript is gone is never offered, since resume cannot bring it back', () => {
+  // Observed live: a session appeared in the registry, was recorded, and left no
+  // transcript behind. It sat in the offer as "projects-f4" with nothing for
+  // `claude --resume` to open.
+  const root = workspace('ghosted');
+  const projects = path.join(fakeHome, '.claude', 'projects', 'enc');
+  const real = 'aaaa1111-2222-3333-4444-555555555555';
+  const ghost = 'bbbb1111-2222-3333-4444-555555555555';
+  fs.mkdirSync(projects, { recursive: true });
+  fs.writeFileSync(path.join(projects, `${real}.jsonl`), '{}\n');
+
+  writeSnapshot([
+    { sessionId: real, cwd: root, name: 'Real', startedAt: 1 },
+    { sessionId: ghost, cwd: root, name: 'Ghost', startedAt: 2 },
+  ]);
+  writeSnapshot([]);
+
+  const offered = restorableWorkspaces(readSnapshot(), undefined, new Set())
+    .find((w) => w.root === root);
+  assert.deepEqual(offered.sessions.map((s) => s.name), ['Real']);
+
+  // Leave the tree as it was found: a readable projects dir changes what every
+  // later test in this file would be offered.
+  fs.rmSync(path.join(fakeHome, '.claude'), { recursive: true, force: true });
+});

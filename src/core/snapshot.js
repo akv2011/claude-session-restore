@@ -116,13 +116,63 @@ export function writeSnapshot(sessions) {
     if (now - (entry.lastSeen ?? 0) > RETAIN_MS || !fs.existsSync(root)) delete workspaces[root];
   }
 
-  const payload = { schemaVersion: SCHEMA_VERSION, capturedAt: now, sessions, workspaces };
+  return persist({ schemaVersion: SCHEMA_VERSION, capturedAt: now, sessions, workspaces });
+}
+
+/** Temp file plus rename, because the failure being defended against is power loss. */
+function persist(payload) {
   const dir = stateDir();
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.state.${process.pid}.tmp`);
   fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
   fs.renameSync(tmp, stateFile());
   return payload;
+}
+
+/**
+ * Drop a session from the store entirely.
+ *
+ * Called after a delete. Without it the chat stayed on the restore banner with
+ * its transcript already in the Trash, and restoring it would open nothing.
+ */
+export function forgetSession(sessionId) {
+  const snapshot = readSnapshot();
+  if (!snapshot) return false;
+  const without = (list) => (list ?? []).filter((s) => s.sessionId !== sessionId);
+
+  const workspaces = {};
+  for (const [root, entry] of Object.entries(snapshot.workspaces ?? {})) {
+    workspaces[root] = { ...entry, sessions: without(entry.sessions), lastLiveSet: without(entry.lastLiveSet) };
+  }
+  persist({ ...snapshot, sessions: without(snapshot.sessions), workspaces });
+  return true;
+}
+
+/**
+ * Session ids that still have a transcript on disk.
+ *
+ * Returns null when the projects directory cannot be read at all, which means
+ * "unknown": callers must then offer everything rather than hide chats merely
+ * because the lookup failed.
+ */
+function transcriptIds() {
+  let dirs;
+  try {
+    dirs = fs.readdirSync(PROJECTS_DIR);
+  } catch {
+    return null;
+  }
+  const ids = new Set();
+  for (const dir of dirs) {
+    let entries;
+    try {
+      entries = fs.readdirSync(path.join(PROJECTS_DIR, dir));
+    } catch { continue; }
+    for (const file of entries) {
+      if (file.endsWith('.jsonl')) ids.add(file.slice(0, -6).toLowerCase());
+    }
+  }
+  return ids;
 }
 
 /**
@@ -160,12 +210,17 @@ const RETAIN_MS = 48 * 60 * 60 * 1000;
 export function restorableWorkspaces(snapshot = readSnapshot(), _reserved, runningIds) {
   if (!snapshot) return [];
   const running = runningIds ?? readRunningSessionIds();
+  // A registry entry is not proof a chat can come back: one was recorded live
+  // and left no transcript at all, and it sat on the banner as "projects-f4"
+  // with nothing for --resume to open. Deleted chats look the same.
+  const resumable = transcriptIds();
 
   return Object.entries(snapshot.workspaces ?? {})
     .map(([root, entry]) => {
       const liveIds = new Set((entry.sessions ?? []).map((s) => s.sessionId));
       const offer = (entry.lastLiveSet ?? []).filter((s) => !liveIds.has(s.sessionId)
-        && !running.has(String(s.sessionId).toLowerCase()));
+        && !running.has(String(s.sessionId).toLowerCase())
+        && (resumable === null || resumable.has(String(s.sessionId).toLowerCase())));
       return {
         root,
         cwd: root,

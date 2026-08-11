@@ -27,6 +27,7 @@ import {
   isInsideClaudeDir, isSessionId,
 } from './paths.js';
 import { liveSessionIds } from './registry.js';
+import { forgetSession } from './snapshot.js';
 
 const TRASH_DIR = path.join(os.homedir(), '.Trash');
 
@@ -184,6 +185,7 @@ export function deleteSession(session, options = {}) {
     moved.push({ ...target, trashedTo: moveToTrash(target.path) });
   }
   const historyRemoved = pruneHistory(sessionId);
+  forgetSession(sessionId);
 
   return { sessionId, moved, historyRemoved, bytesReclaimed: plan.totalBytes };
 }

@@ -138,3 +138,25 @@ test('a live chat cannot be deleted', async () => {
   );
   assert.ok(fs.existsSync(path.join(projectPath, `${SID}.jsonl`)), 'live transcript was deleted');
 });
+
+test('deleting a chat also removes it from the restore offer', async () => {
+  // Delete swept five stores and left the sixth alone, so a chat you deleted was
+  // still offered on the banner and restoring it would have opened nothing.
+  seed();
+  const snap = await import('../src/core/snapshot.js');
+  const { deleteSession } = await import('../src/core/deleter.js');
+
+  const root = path.join(fakeHome, 'proj');
+  fs.mkdirSync(root, { recursive: true });
+  snap.writeSnapshot([
+    { sessionId: SID, cwd: root, name: 'Doomed', startedAt: 1 },
+    { sessionId: OTHER, cwd: root, name: 'Keeper', startedAt: 2 },
+  ]);
+  snap.writeSnapshot([]);   // both go dark, both on offer
+
+  deleteSession({ sessionId: SID, projectDir: PROJECT_DIR });
+
+  const offered = snap.restorableWorkspaces(snap.readSnapshot(), undefined, new Set())
+    .find((w) => w.root === root);
+  assert.deepEqual((offered?.sessions ?? []).map((s) => s.name), ['Keeper']);
+});
